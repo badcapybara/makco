@@ -49,7 +49,21 @@ Backend (Rust) at `/home/makco/backend`:
 - `src/handlers.rs` — axum handlers, admin check (8190835624), token header
   validation, mode query param (`?mode=bus|metro`).
 - `src/main.rs` — routes incl. `/transit/*` + legacy `/metro/*` aliases.
-- Compiles clean (only unused-const warnings). Boots and serves `/` = 200.
+- Compiles clean (zero warnings). Boots and serves `/` = 200.
+
+Flutter app at `/home/makco/frontend/flutter`:
+- Rail Signage / Data Terminal UI (amber-on-black, split-flap boards).
+- Theme in `lib/theme/terminal_theme.dart`; screens in `lib/screens/`.
+- `flutter analyze` clean. APK builds (debug).
+
+Android Kotlin app at `/home/makco/frontend/android`:
+- Same design language, Jetpack Compose.
+- `ui/theme/Terminal.kt` palette, `ui/components/TerminalComponents.kt` system.
+- Screens: Auth, Home (bus/metro picker), Booking, Payment, History, Profile.
+- `./gradlew assembleDebug` builds. Kotlin 2.0 + Compose compiler plugin.
+
+Docs: `docs/API_REFERENCE.md`, `docs/DESIGN_LANGUAGE.md`, `docs/SETUP.md`.
+Git repo initialized at `/home/makco`, initial commit on `main`.
 
 ### Real API facts extracted from Chennai One bundle (verified in decompiled_fresh)
 - vehicle types: `BUS`, `BUS_HYBRID`, `METRO`, `METRO_V2`
@@ -65,13 +79,13 @@ Backend (Rust) at `/home/makco/backend`:
 
 ## WHAT IS NEXT (roadmap)
 
-1. Backend: harden — fix warnings, add graceful shutdown, systemd/nginx notes.
-2. Flutter app at `/home/makco/frontend/flutter` — Rail Signage UI:
-   - splash, auth (OTP), home (mode picker bus/metro), stations picker,
-     search/quote, booking, payment webview, ticket display, history, profile.
-3. Android Kotlin app at `/home/makco/frontend/android` — same design, same flow.
-4. Docs at `/home/makco/docs` — API_REFERENCE, DESIGN_LANGUAGE, SETUP.
-5. GitHub — push to `pandatern/makco` (new Rust branch or new repo) + CI.
+1. Push to GitHub — needs `gh auth login` (not currently logged in). Target:
+   `pandatern/makco` (new repo or new branch) + CI workflows for Rust + Flutter.
+2. End-to-end verification against live MovingTech API (needs a real OTP/token).
+3. Deploy backend behind nginx (`api.pandatern.tech`) + systemd.
+4. Optional: wire bus-mode specifics (active routes, route stops, possible stops)
+   into the UI beyond the generic station picker.
+5. Add scripts/test_api.py equivalent for the Rust backend.
 
 ---
 
