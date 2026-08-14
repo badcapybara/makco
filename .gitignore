@@ -1,0 +1,27 @@
+# Rust
+backend/target/
+**/*.rs.bk
+
+# Flutter
+frontend/flutter/build/
+frontend/flutter/.dart_tool/
+frontend/flutter/.flutter-plugins*
+frontend/flutter/.packages
+frontend/flutter/android/local.properties
+frontend/flutter/ios/Pods/
+
+# Android
+frontend/android/build/
+frontend/android/app/build/
+frontend/android/local.properties
+frontend/android/.gradle/
+**/.gradle/
+*.keystore
+*.jks
+
+# Env / secrets
+.env
+*.log
+
+# OS
+.DS_Store
