@@ -2,8 +2,8 @@
   "project": "Makco",
   "description": "Chennai Metro booking app - reverse-engineered Namma Yatri/Chennai One",
   "github": {
-    "repo": "https://github.com/pandatern/makco",
-    "owner": "pandatern",
+    "repo": "https://github.com/badcapybara/makco",
+    "owner": "badcapybara",
     "branch": "main"
   },
   "endpoints": {
