@@ -1,26 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'screens/splash_screen.dart';
-import 'theme/terminal_theme.dart';
+import 'package:makco/router.dart';
+import 'package:makco/theme/madras_flow.dart';
 
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  final prefs = await SharedPreferences.getInstance();
-  runApp(MakcoApp(token: prefs.getString('token')));
+void main() {
+  runApp(const ProviderScope(child: MakcoApp()));
 }
 
-class MakcoApp extends StatelessWidget {
-  final String? token;
-  const MakcoApp({super.key, this.token});
+class MakcoApp extends ConsumerWidget {
+  const MakcoApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final router = ref.watch(routerProvider);
+    return MaterialApp.router(
       title: 'MAKCO',
       debugShowCheckedModeBanner: false,
-      theme: Terminal.theme(),
-      home: SplashScreen(startToken: token),
+      theme: Mf.theme(),
+      routerConfig: router,
     );
   }
 }

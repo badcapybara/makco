@@ -1,17 +1,28 @@
-# makco_flutter
+# MAKCO Flutter app
 
-A new Flutter project.
+Chennai Metro booking client built with Flutter, Riverpod 3 and go_router.
+"Madras Flow" design system lives in `lib/theme/`.
 
-## Getting Started
+## Run
 
-This project is a starting point for a Flutter application.
+```bash
+flutter pub get
+flutter run --dart-define=API_BASE=http://127.0.0.1:8080
+```
 
-A few resources to get you started if this is your first Flutter project:
+## Verify
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+flutter analyze
+flutter test
+flutter build apk --release
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Release APK: `build/app/outputs/flutter-apk/app-release.apk`.
+
+## Local data
+
+- Session token/user id: `flutter_secure_storage`.
+- Offline cache: `lib/services/cache.dart`.
+- Favourites: `lib/state/favourites.dart`.
+- Fonts: `assets/fonts/` (Bricolage Grotesque, Public Sans; OFL licenses).

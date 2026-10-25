@@ -1,13 +1,38 @@
 # Setup Guide - Makco v3
 
-Rust backend (axum) + Flutter & Android Kotlin frontends.
-Runs against the MovingTech / Chennai One pilot API.
+Rust backend (axum). Runs against the MovingTech / Chennai One pilot API.
 
 ## Prerequisites
 
-- Rust 1.75+ (1.97 verified)
-- Flutter 3.24+ (3.44 verified)
-- Android SDK 35 (for Android app), Java 17+
+- Rust 1.75+ (1.99 verified)
+- Flutter 3.47+ / Dart 3.13+ (SDK at `/opt/flutter`)
+- Android SDK 36 at `/opt/android-sdk` (build-tools 36.0.0, platform 36)
+
+## Frontend
+
+```bash
+cd frontend/flutter
+flutter pub get
+flutter analyze
+flutter test                  # widget smoke tests
+flutter build apk --release   # signed via android/makco-release.jks
+```
+
+State: Riverpod 3 (`lib/state/`); routing: go_router (`lib/router.dart`).
+Ticket deep link: `makco://app/ticket?ref=<ticketRef>`.
+
+Local data:
+
+- Session token/user id: `flutter_secure_storage` (legacy plain-preferences
+  values migrate on first boot).
+- Offline cache: `lib/services/cache.dart` keeps the last stations and tickets.
+- Favourites: `lib/state/favourites.dart`.
+- Fonts: bundled Bricolage Grotesque and Public Sans in `assets/fonts/` (OFL).
+- Nearby stations use `geolocator`; Android asks for location only when the
+  rider taps "Near me".
+
+APK: `frontend/flutter/build/app/outputs/flutter-apk/app-release.apk`
+(published to `http://163.123.236.154/app-release.apk`).
 
 ## Backend
 
@@ -31,30 +56,13 @@ curl http://localhost:8080/
 | MT_BASE_URL | https://api.moving.tech/pilot/app/v2 | Upstream |
 | MERCHANT_ID | NAMMA_YATRI | Auth payload |
 | CLIENT_ID | NAMMA_YATRI | Auth payload |
-| ADMIN_PHONES | 8190835624 | Comma-separated; enables mock payment |
 
-## Flutter app
+## CI
 
-```bash
-cd frontend/flutter
-flutter pub get
-flutter run                 # emulator, points at http://10.0.2.2:8080
-flutter build apk --release
-```
-
-API base is in `lib/services/api_service.dart` (`ApiService.baseUrl`). For a
-physical device, change to `http://<your-lan-ip>:8080`.
-
-## Android app
-
-```bash
-cd frontend/android
-./gradlew assembleDebug
-# APK: app/build/outputs/apk/debug/app-debug.apk
-```
-
-API base is in `data/remote/Api.kt` (`ApiClient.BASE_URL`). Emulator default:
-`http://10.0.2.2:8080/`.
+`.github/workflows/ci.yml` runs `cargo check/test` for the backend and
+`flutter analyze/test` for the app. It builds a release APK when the
+`MAKCO_KEYSTORE_BASE64` secret is configured, otherwise a debug APK, and
+uploads it as an artifact.
 
 ## Local API test
 
@@ -62,7 +70,17 @@ The backend is a thin proxy — the old `scripts/test_api.py` (Python) against
 the MovingTech base URL still exercises the full upstream flow. Auth sends a
 real SMS OTP; do not run casually.
 
-## nginx / production
+## Production
 
-Proxy `https://api.pandatern.tech/` to `localhost:8080` (as in v2). Build the
-release binary and run it under systemd.
+The API currently runs directly on the server IP over HTTP:
+`http://163.123.236.154:8080` (UFW allows 8080). It is managed by systemd:
+
+```bash
+sudo systemctl status makco
+sudo systemctl restart makco
+journalctl -u makco -f
+```
+
+The old nginx/Cloudflare domain setup (`api.pandatern.tech`) was removed; the
+panda* site configs were moved to `/root/nginx-panda-backup`. Terminate TLS in
+front of `localhost:8080` later if a domain is added back.

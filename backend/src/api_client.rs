@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
-use crate::config::{vehicle_type_for_mode, Config, VEHICLE_BUS_HYBRID};
+use crate::config::{vehicle_type_for_mode, Config};
 
 pub struct MtClient {
     base_url: String,
@@ -43,7 +43,10 @@ impl MtClient {
         if let Some(b) = body {
             req = req.json(&b);
         }
-        let resp = req.send().await.map_err(|e| anyhow!("upstream error: {e}"))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| anyhow!("upstream error: {e}"))?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if text.trim().is_empty() {
@@ -73,13 +76,25 @@ impl MtClient {
             "merchantId": self.merchant_id,
             "clientId": self.client_id
         });
-        self.request(reqwest::Method::POST, "auth", None, Some(body), vec![]).await
+        self.request(reqwest::Method::POST, "auth", None, Some(body), vec![])
+            .await
     }
 
-    pub async fn mt_verify_auth(&self, auth_id: &str, otp: &str, device_token: &str) -> Result<Value> {
+    pub async fn mt_verify_auth(
+        &self,
+        auth_id: &str,
+        otp: &str,
+        device_token: &str,
+    ) -> Result<Value> {
         let body = serde_json::json!({"otp": otp, "deviceToken": device_token});
-        self.request(reqwest::Method::POST, &format!("auth/{auth_id}/verify"), None, Some(body), vec![])
-            .await
+        self.request(
+            reqwest::Method::POST,
+            &format!("auth/{auth_id}/verify"),
+            None,
+            Some(body),
+            vec![],
+        )
+        .await
     }
 
     // ---- Transit data (generic across modes) ----
@@ -88,7 +103,14 @@ impl MtClient {
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
         ];
-        self.request(reqwest::Method::GET, "frfs/stations", Some(token), None, query).await
+        self.request(
+            reqwest::Method::GET,
+            "frfs/stations",
+            Some(token),
+            None,
+            query,
+        )
+        .await
     }
 
     pub async fn mt_get_routes(&self, token: &str, city: &str, mode: &str) -> Result<Value> {
@@ -96,32 +118,76 @@ impl MtClient {
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
         ];
-        self.request(reqwest::Method::GET, "frfs/routes", Some(token), None, query).await
+        self.request(
+            reqwest::Method::GET,
+            "frfs/routes",
+            Some(token),
+            None,
+            query,
+        )
+        .await
     }
 
-    pub async fn mt_get_active_routes(&self, token: &str, city: &str) -> Result<Value> {
-        let query = vec![("city", city.to_string())];
-        self.request(reqwest::Method::GET, "frfs/activeRoutes", Some(token), None, query).await
-    }
-
-    pub async fn mt_get_route_stops(&self, token: &str, city: &str, route_code: &str) -> Result<Value> {
+    pub async fn mt_get_active_routes(&self, token: &str, city: &str, mode: &str) -> Result<Value> {
         let query = vec![
             ("city", city.to_string()),
-            ("vehicleType", VEHICLE_BUS_HYBRID.to_string()),
+            ("vehicleType", vehicle_type_for_mode(mode)),
+        ];
+        self.request(
+            reqwest::Method::GET,
+            "frfs/activeRoutes",
+            Some(token),
+            None,
+            query,
+        )
+        .await
+    }
+
+    pub async fn mt_get_route_stops(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+        route_code: &str,
+    ) -> Result<Value> {
+        let query = vec![
+            ("city", city.to_string()),
+            ("vehicleType", vehicle_type_for_mode(mode)),
         ];
         let path = format!("frfs/route/{route_code}/stops");
-        self.request(reqwest::Method::GET, &path, Some(token), None, query).await
+        self.request(reqwest::Method::GET, &path, Some(token), None, query)
+            .await
     }
 
-    pub async fn mt_get_possible_stops(&self, token: &str, city: &str) -> Result<Value> {
+    pub async fn mt_get_possible_stops(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+    ) -> Result<Value> {
         let query = vec![
             ("city", city.to_string()),
-            ("vehicleType", VEHICLE_BUS_HYBRID.to_string()),
+            ("vehicleType", vehicle_type_for_mode(mode)),
         ];
-        self.request(reqwest::Method::GET, "frfs/stations/possibleStops", Some(token), None, query).await
+        self.request(
+            reqwest::Method::POST,
+            "frfs/stations/possibleStops",
+            Some(token),
+            None,
+            query,
+        )
+        .await
     }
 
-    pub async fn mt_search_fare(&self, token: &str, city: &str, mode: &str, from: &str, to: &str, qty: i64) -> Result<Value> {
+    pub async fn mt_search_fare(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+        from: &str,
+        to: &str,
+        qty: i64,
+    ) -> Result<Value> {
         let body = serde_json::json!({
             "fromStationCode": from,
             "toStationCode": to,
@@ -131,59 +197,112 @@ impl MtClient {
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
         ];
-        self.request(reqwest::Method::POST, "frfs/search", Some(token), Some(body), query).await
+        self.request(
+            reqwest::Method::POST,
+            "frfs/search",
+            Some(token),
+            Some(body),
+            query,
+        )
+        .await
     }
 
-    pub async fn mt_get_quote(&self, token: &str, city: &str, mode: &str, search_id: &str) -> Result<Value> {
+    pub async fn mt_get_quote(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+        search_id: &str,
+    ) -> Result<Value> {
         let query = vec![
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
         ];
         let path = format!("frfs/search/{search_id}/quote");
-        self.request(reqwest::Method::GET, &path, Some(token), None, query).await
+        self.request(reqwest::Method::GET, &path, Some(token), None, query)
+            .await
     }
 
-    pub async fn mt_confirm_booking(&self, token: &str, city: &str, mode: &str, quote_id: &str, qty: i64, is_mock: bool) -> Result<Value> {
-        let body = serde_json::json!({
-            "quantity": qty,
-            "isMockPayment": is_mock
-        });
-        let mut query: Vec<(&str, String)> = vec![
+    pub async fn mt_confirm_booking(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+        quote_id: &str,
+        qty: i64,
+    ) -> Result<Value> {
+        let body = serde_json::json!({"quantity": qty});
+        let query = vec![
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
         ];
-        query.push(("isMockPayment", is_mock.to_string()));
         let path = format!("frfs/quote/{quote_id}/confirm");
-        self.request(reqwest::Method::POST, &path, Some(token), Some(body), query).await
+        self.request(reqwest::Method::POST, &path, Some(token), Some(body), query)
+            .await
     }
 
-    pub async fn mt_get_booking_status(&self, token: &str, city: &str, mode: &str, booking_id: &str) -> Result<Value> {
+    pub async fn mt_get_booking_status(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+        booking_id: &str,
+    ) -> Result<Value> {
         let query = vec![
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
         ];
         let path = format!("frfs/booking/{booking_id}/status");
-        self.request(reqwest::Method::GET, &path, Some(token), None, query).await
+        self.request(reqwest::Method::GET, &path, Some(token), None, query)
+            .await
     }
 
-    pub async fn mt_verify_ticket(&self, token: &str, city: &str, mode: &str, ticket_ref: &str) -> Result<Value> {
+    pub async fn mt_verify_ticket(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+        qr_data: &str,
+    ) -> Result<Value> {
         let query: Vec<(&str, String)> = vec![
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
-            ("ticketRef", ticket_ref.to_string()),
         ];
-        self.request(reqwest::Method::GET, "frfs/ticket/verify", Some(token), None, query).await
+        let body = serde_json::json!({ "qrData": qr_data });
+        self.request(
+            reqwest::Method::POST,
+            "frfs/ticket/verify",
+            Some(token),
+            Some(body),
+            query,
+        )
+        .await
     }
 
     pub async fn mt_get_profile(&self, token: &str) -> Result<Value> {
-        self.request(reqwest::Method::GET, "profile", Some(token), None, vec![]).await
+        self.request(reqwest::Method::GET, "profile", Some(token), None, vec![])
+            .await
     }
 
-    pub async fn mt_get_ticket_bookings(&self, token: &str, city: &str, mode: &str) -> Result<Value> {
+    pub async fn mt_get_ticket_bookings(
+        &self,
+        token: &str,
+        city: &str,
+        mode: &str,
+    ) -> Result<Value> {
         let query = vec![
             ("city", city.to_string()),
             ("vehicleType", vehicle_type_for_mode(mode)),
+            ("limit", "20".to_string()),
+            ("offset", "0".to_string()),
         ];
-        self.request(reqwest::Method::GET, "ticket/bookings/v2", Some(token), None, query).await
+        self.request(
+            reqwest::Method::GET,
+            "frfs/booking/list",
+            Some(token),
+            None,
+            query,
+        )
+        .await
     }
 }

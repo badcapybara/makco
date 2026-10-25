@@ -27,20 +27,32 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(handlers::health))
         // Auth
         .route("/auth", post(handlers::init_auth))
-        .route("/auth/{auth_id}/verify", post(handlers::verify_auth))
+        .route("/auth/:auth_id/verify", post(handlers::verify_auth))
         // Transit data
         .route("/transit/stations", get(handlers::get_stations))
         .route("/transit/routes", get(handlers::get_routes))
         .route("/transit/routes/active", get(handlers::get_active_routes))
-        .route("/transit/route/{route_code}/stops", get(handlers::get_route_stops))
+        .route(
+            "/transit/route/:route_code/stops",
+            get(handlers::get_route_stops),
+        )
         .route("/transit/stops/possible", get(handlers::get_possible_stops))
         // Search / quote / booking
         .route("/transit/search", post(handlers::search_fare))
-        .route("/transit/search/{search_id}/quote", get(handlers::get_quote))
-        .route("/transit/quote/{quote_id}/confirm", post(handlers::confirm_booking))
-        .route("/transit/booking/{booking_id}/status", get(handlers::get_booking_status))
-        .route("/transit/booking/{booking_id}/refresh", get(handlers::refresh_booking_status))
-        .route("/transit/ticket/verify", get(handlers::verify_ticket))
+        .route("/transit/search/:search_id/quote", get(handlers::get_quote))
+        .route(
+            "/transit/quote/:quote_id/confirm",
+            post(handlers::confirm_booking),
+        )
+        .route(
+            "/transit/booking/:booking_id/status",
+            get(handlers::get_booking_status),
+        )
+        .route(
+            "/transit/booking/:booking_id/refresh",
+            get(handlers::refresh_booking_status),
+        )
+        .route("/transit/ticket/verify", post(handlers::verify_ticket))
         // User
         .route("/profile", get(handlers::get_profile))
         .route("/tickets", get(handlers::get_ticket_bookings))
@@ -48,15 +60,24 @@ async fn main() -> anyhow::Result<()> {
         .route("/metro/stations", get(handlers::get_stations))
         .route("/metro/routes", get(handlers::get_routes))
         .route("/metro/search", post(handlers::search_fare))
-        .route("/metro/search/{search_id}/quote", get(handlers::get_quote))
-        .route("/metro/quote/{quote_id}/confirm", post(handlers::confirm_booking))
-        .route("/booking/{booking_id}/status", get(handlers::get_booking_status))
-        .route("/booking/{booking_id}/refresh", get(handlers::refresh_booking_status))
+        .route("/metro/search/:search_id/quote", get(handlers::get_quote))
+        .route(
+            "/metro/quote/:quote_id/confirm",
+            post(handlers::confirm_booking),
+        )
+        .route(
+            "/booking/:booking_id/status",
+            get(handlers::get_booking_status),
+        )
+        .route(
+            "/booking/:booking_id/refresh",
+            get(handlers::refresh_booking_status),
+        )
         .layer(cors);
 
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Makco v3.0.0 serving multimodal transit API at http://{addr}");
+    tracing::info!("Makco v3.3.0 serving metro transit API at http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }

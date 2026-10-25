@@ -1,11 +1,27 @@
 use std::sync::OnceLock;
 
-use axum::{extract::Path, extract::Query, http::HeaderMap, response::IntoResponse, Json};
+use axum::{
+    extract::Path,
+    extract::Query,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::api_client::MtClient;
 use crate::config::Config;
+
+type ApiError = (StatusCode, Json<Value>);
+type ApiResult = Result<Json<Value>, ApiError>;
+
+fn api_error(status: StatusCode, code: &str, message: impl Into<String>) -> ApiError {
+    (
+        status,
+        Json(json!({"errorCode": code, "errorMessage": message.into()})),
+    )
+}
 
 #[derive(Deserialize)]
 pub struct AuthBody {
@@ -63,11 +79,9 @@ pub struct CtyQuery {
 }
 
 #[derive(Deserialize)]
-pub struct TicketQuery {
-    pub city: Option<String>,
-    pub mode: Option<String>,
-    #[serde(rename = "ticketRef", default)]
-    pub ticket_ref: Option<String>,
+pub struct VerifyTicketBody {
+    #[serde(rename = "qrData", default)]
+    pub qr_data: Option<String>,
 }
 
 fn token_from(headers: &HeaderMap) -> Option<String> {
@@ -89,105 +103,146 @@ pub async fn health() -> impl IntoResponse {
     Json(json!({
         "status": "ok",
         "app": "Makco",
-        "version": "3.0.0",
+        "version": "3.3.0",
         "modes": ["bus", "metro"]
     }))
 }
 
-pub async fn init_auth(Json(body): Json<AuthBody>) -> impl IntoResponse {
+pub async fn init_auth(Json(body): Json<AuthBody>) -> ApiResult {
     let phone = body.phone();
     if phone.len() != 10 || !phone.chars().all(|c| c.is_ascii_digit()) {
-        return Json(json!({"error": "Invalid phone number", "errorCode": "INVALID_PHONE"}));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PHONE",
+            "Phone number must be 10 digits",
+        ));
     }
     match client().mt_auth(&phone, &body.country()).await {
-        Ok(r) => Json(r),
-        Err(e) => Json(json!({"error": "Auth failed", "message": e.to_string()})),
+        Ok(r) => Ok(Json(r)),
+        Err(e) => Err(api_error(
+            StatusCode::BAD_GATEWAY,
+            "AUTH_FAILED",
+            e.to_string(),
+        )),
     }
 }
 
-pub async fn verify_auth(Path(auth_id): Path<String>, Json(body): Json<VerifyBody>) -> impl IntoResponse {
+pub async fn verify_auth(Path(auth_id): Path<String>, Json(body): Json<VerifyBody>) -> ApiResult {
     if auth_id.is_empty() {
-        return Json(json!({"error": "Missing authId"}));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_AUTH_ID",
+            "Missing authId",
+        ));
     }
     let otp = body.otp.unwrap_or_default();
     if otp.len() != 4 || !otp.chars().all(|c| c.is_ascii_digit()) {
-        return Json(json!({"error": "OTP must be 4 digits", "errorCode": "INVALID_OTP"}));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_OTP",
+            "OTP must be 4 digits",
+        ));
     }
     let device = body
         .device_token
         .or(body.device_token_alt)
         .unwrap_or_else(|| "makco_device".to_string());
     match client().mt_verify_auth(&auth_id, &otp, &device).await {
-        Ok(r) => Json(r),
-        Err(e) => Json(json!({"error": "Verify failed", "message": e.to_string()})),
+        Ok(r) => Ok(Json(r)),
+        Err(e) => Err(api_error(
+            StatusCode::BAD_GATEWAY,
+            "VERIFY_FAILED",
+            e.to_string(),
+        )),
     }
 }
 
-fn require_token(headers: &HeaderMap) -> Result<String, Json<Value>> {
+fn require_token(headers: &HeaderMap) -> Result<String, ApiError> {
     token_from(headers).ok_or_else(|| {
-        Json(json!({
-            "errorCode": "MISSING_HEADER",
-            "errorMessage": "Header token is missing"
-        }))
+        api_error(
+            StatusCode::UNAUTHORIZED,
+            "MISSING_HEADER",
+            "Header token is missing",
+        )
     })
 }
 
-pub async fn get_stations(Query(q): Query<CtyQuery>, headers: HeaderMap) -> Result<Json<Value>, Json<Value>> {
+pub async fn get_stations(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_stations(&token, &city, &mode).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Failed to get stations", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_stations(&token, &city, &mode)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "STATIONS_FAILED", e.to_string()))
 }
 
-pub async fn get_routes(Query(q): Query<CtyQuery>, headers: HeaderMap) -> Result<Json<Value>, Json<Value>> {
+pub async fn get_routes(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_routes(&token, &city, &mode).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Failed to get routes", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_routes(&token, &city, &mode)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "ROUTES_FAILED", e.to_string()))
 }
 
-pub async fn get_active_routes(Query(q): Query<CtyQuery>, headers: HeaderMap) -> Result<Json<Value>, Json<Value>> {
+pub async fn get_active_routes(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
+    let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_active_routes(&token, &city).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Failed to get active routes", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_active_routes(&token, &city, &mode)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "ACTIVE_ROUTES_FAILED",
+                e.to_string(),
+            )
+        })
 }
 
 pub async fn get_route_stops(
     Path((route_code,)): Path<(String,)>,
     Query(q): Query<CtyQuery>,
     headers: HeaderMap,
-) -> Result<Json<Value>, Json<Value>> {
+) -> ApiResult {
     let token = require_token(&headers)?;
+    let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_route_stops(&token, &city, &route_code).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Failed to get route stops", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_route_stops(&token, &city, &mode, &route_code)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "ROUTE_STOPS_FAILED", e.to_string()))
 }
 
-pub async fn get_possible_stops(Query(q): Query<CtyQuery>, headers: HeaderMap) -> Result<Json<Value>, Json<Value>> {
+pub async fn get_possible_stops(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
+    let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_possible_stops(&token, &city).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Failed to get possible stops", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_possible_stops(&token, &city, &mode)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "POSSIBLE_STOPS_FAILED",
+                e.to_string(),
+            )
+        })
 }
 
 pub async fn search_fare(
     Query(q): Query<CtyQuery>,
     headers: HeaderMap,
     Json(body): Json<SearchBody>,
-) -> Result<Json<Value>, Json<Value>> {
+) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
@@ -195,26 +250,39 @@ pub async fn search_fare(
     let to = body.to_station_code.unwrap_or_default();
     let qty = body.quantity.unwrap_or(1);
     if from.is_empty() || to.is_empty() {
-        return Err(Json(json!({"error": "Missing station codes"})));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_STATIONS",
+            "Both station codes are required",
+        ));
     }
-    match client().mt_search_fare(&token, &city, &mode, &from, &to, qty).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Search failed", "message": e.to_string()}))),
+    if qty < 1 || qty > 6 {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_QUANTITY",
+            "Quantity must be between 1 and 6",
+        ));
     }
+    client()
+        .mt_search_fare(&token, &city, &mode, &from, &to, qty)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "SEARCH_FAILED", e.to_string()))
 }
 
 pub async fn get_quote(
     Path(search_id): Path<String>,
     Query(q): Query<CtyQuery>,
     headers: HeaderMap,
-) -> Result<Json<Value>, Json<Value>> {
+) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_quote(&token, &city, &mode, &search_id).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Quote failed", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_quote(&token, &city, &mode, &search_id)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "QUOTE_FAILED", e.to_string()))
 }
 
 pub async fn confirm_booking(
@@ -222,110 +290,103 @@ pub async fn confirm_booking(
     Query(q): Query<CtyQuery>,
     headers: HeaderMap,
     Json(body): Json<ConfirmBody>,
-) -> Result<Json<Value>, Json<Value>> {
+) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
     let qty = body.quantity.unwrap_or(1);
-
-    let is_admin = match client().mt_get_profile(&token).await {
-        Ok(profile) => is_admin_account(&profile),
-        Err(_) => false,
-    };
-    if is_admin {
-        tracing::info!("ADMIN verified, mock payment enabled");
+    if qty < 1 || qty > 6 {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_QUANTITY",
+            "Quantity must be between 1 and 6",
+        ));
     }
 
-    match client().mt_confirm_booking(&token, &city, &mode, &quote_id, qty, is_admin).await {
-        Ok(mut r) => {
-            if let Some(obj) = r.as_object_mut() {
-                obj.insert("isAdmin".into(), json!(is_admin));
-            }
-            Ok(Json(r))
-        }
-        Err(e) => Err(Json(json!({"error": "Confirm failed", "message": e.to_string()}))),
-    }
+    client()
+        .mt_confirm_booking(&token, &city, &mode, &quote_id, qty)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "CONFIRM_FAILED", e.to_string()))
 }
 
 pub async fn get_booking_status(
     Path(booking_id): Path<String>,
     Query(q): Query<CtyQuery>,
     headers: HeaderMap,
-) -> Result<Json<Value>, Json<Value>> {
+) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_booking_status(&token, &city, &mode, &booking_id).await {
-        Ok(mut r) => {
-            let is_admin = match client().mt_get_profile(&token).await {
-                Ok(profile) => is_admin_account(&profile),
-                Err(_) => false,
-            };
-            if let Some(obj) = r.as_object_mut() {
-                obj.insert("isAdmin".into(), json!(is_admin));
-            }
-            Ok(Json(r))
-        }
-        Err(e) => Err(Json(json!({"error": "Status failed", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_booking_status(&token, &city, &mode, &booking_id)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "STATUS_FAILED", e.to_string()))
 }
 
 pub async fn refresh_booking_status(
     Path(booking_id): Path<String>,
     Query(q): Query<CtyQuery>,
     headers: HeaderMap,
-) -> Result<Json<Value>, Json<Value>> {
+) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_booking_status(&token, &city, &mode, &booking_id).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Refresh failed", "message": e.to_string()}))),
-    }
+    client()
+        .mt_get_booking_status(&token, &city, &mode, &booking_id)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "REFRESH_FAILED", e.to_string()))
 }
 
 pub async fn verify_ticket(
-    Query(q): Query<TicketQuery>,
+    Query(q): Query<CtyQuery>,
     headers: HeaderMap,
-) -> Result<Json<Value>, Json<Value>> {
-    let token = require_token(&headers)?;
-    let mode = q.mode.as_deref().unwrap_or("metro");
-    let city = q.city.clone().unwrap_or_else(|| "chennai".to_string());
-    let ticket_ref = q.ticket_ref.as_deref().unwrap_or_default();
-    if ticket_ref.is_empty() {
-        return Err(Json(json!({"error": "Missing ticketRef"})));
-    }
-    match client().mt_verify_ticket(&token, &city, mode, ticket_ref).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Ticket verify failed", "message": e.to_string()}))),
-    }
-}
-
-pub async fn get_profile(headers: HeaderMap) -> Result<Json<Value>, Json<Value>> {
-    let token = require_token(&headers)?;
-    match client().mt_get_profile(&token).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Profile failed", "message": e.to_string()}))),
-    }
-}
-
-pub async fn get_ticket_bookings(Query(q): Query<CtyQuery>, headers: HeaderMap) -> Result<Json<Value>, Json<Value>> {
+    Json(body): Json<VerifyTicketBody>,
+) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    match client().mt_get_ticket_bookings(&token, &city, &mode).await {
-        Ok(r) => Ok(Json(r)),
-        Err(e) => Err(Json(json!({"error": "Tickets failed", "message": e.to_string()}))),
+    let qr_data = body.qr_data.as_deref().unwrap_or_default();
+    if qr_data.is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "MISSING_QR",
+            "qrData is required",
+        ));
     }
+    client()
+        .mt_verify_ticket(&token, &city, &mode, qr_data)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            api_error(
+                StatusCode::BAD_GATEWAY,
+                "VERIFY_TICKET_FAILED",
+                e.to_string(),
+            )
+        })
 }
 
-pub fn is_admin_account(profile: &Value) -> bool {
-    let phone = profile.get("maskedMobileNumber").and_then(|v| v.as_str()).unwrap_or("");
-    let id = profile.get("id").and_then(|v| v.as_str()).unwrap_or("");
-    let admins = std::env::var("ADMIN_PHONES").unwrap_or_else(|_| "8190835624".to_string());
-    let phone_matches = admins.split(',').any(|p| phone.contains(p.trim()));
-    // Admin phone(s) from ADMIN_PHONES / UUID fallback
-    phone_matches || phone == "819...624" || id == "fd86b184-27ac-4f89-a7fa-c274692f9602"
+pub async fn get_profile(headers: HeaderMap) -> ApiResult {
+    let token = require_token(&headers)?;
+    client()
+        .mt_get_profile(&token)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "PROFILE_FAILED", e.to_string()))
+}
+
+pub async fn get_ticket_bookings(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
+    let token = require_token(&headers)?;
+    let mode = mode_of(&q);
+    let city = city_of(&q);
+    client()
+        .mt_get_ticket_bookings(&token, &city, &mode)
+        .await
+        .map(Json)
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "TICKETS_FAILED", e.to_string()))
 }
 
 static CLIENT: OnceLock<MtClient> = OnceLock::new();

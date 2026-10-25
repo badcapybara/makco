@@ -17,23 +17,19 @@ normal repo conventions.
 
 ## WHAT I AM BUILDING
 
-**Makco v3** — a multimodal Chennai transit app (bus + metro) at `/home/makco`.
+**Makco v3** — a Chennai metro booking app at `/home/makco`: a Rust BFF plus a
+Flutter Android app using the "Madras Flow" design language.
 
-Goal: replace the old metro-only Nim app with a fresh Rust backend and a new
-unique UI. Same underlying MovingTech / Chennai One API, same auth + Juspay
-payment model, but:
-- transport focus broadened from metro-only to **bus + metro** (and hybrid)
-- backend rewritten in **Rust (axum)** instead of Nim
-- frontend: **both Flutter and Android Kotlin**, same new design language
+Goal: replace the old Nim app with a Rust backend and a fast, modern Flutter
+client on top of the MovingTech / Chennai One API. Metro-first: upstream still
+accepts `BUS`/`SUBWAY`, but Chennai bus data is empty, so the app exposes Metro
+only until that changes.
 
-### Design language (decided)
-"Rail Signage / Data Terminal" — departure-board split-flaps, monospace,
-high-contrast amber/black, real transit-board aesthetic. Non-standard, unique.
-
-### Tech decisions (decided by user)
-- Backend: Rust (axum + reqwest). NOT Nim.
-- Frontend: Flutter AND Android Kotlin (both).
-- Modes: Bus + Metro.
+### Tech decisions
+- Backend: Rust (axum + reqwest), not Nim.
+- Frontend: Flutter, org `com.pandatern.makco`, Riverpod 3 + go_router.
+- Design: "Madras Flow" (`docs/DESIGN.md`) — warm, rider-friendly, ticket logic.
+- Scope: Chennai Metro now; bus held behind the backend for later.
 - Location: `/home/makco`.
 
 ---
@@ -41,74 +37,88 @@ high-contrast amber/black, real transit-board aesthetic. Non-standard, unique.
 ## WHAT IS DONE
 
 Backend (Rust) at `/home/makco/backend`:
-- `Cargo.toml` — axum 0.7, reqwest (rustls), serde, tokio, tower-http CORS.
-- `src/config.rs` — env config; vehicleType mapping BUS/BUS_HYBRID/METRO/METRO_V2.
-- `src/api_client.rs` — MovingTech proxy client (mt_auth, stations, routes,
-  activeRoutes, route stops, possibleStops, search, quote, confirm, status,
-  ticket verify, profile, ticket bookings). Uses reqwest.
-- `src/handlers.rs` — axum handlers, admin check (8190835624), token header
-  validation, mode query param (`?mode=bus|metro`).
-- `src/main.rs` — routes incl. `/transit/*` + legacy `/metro/*` aliases.
-- Compiles clean (zero warnings). Boots and serves `/` = 200.
+- `src/config.rs` — mode→vehicleType mapping: metro→`METRO`, bus→`BUS`.
+- `src/api_client.rs` — MovingTech proxy (auth, stations, routes, activeRoutes,
+  route stops, possible stops, search, quote, confirm, status, ticket verify,
+  profile, ticket bookings). Mode-aware.
+- `src/handlers.rs` — token validation, mode query, and a thin upstream proxy.
+  Payment is universal; no admin detection or mock-payment bypass. Errors return
+  real HTTP status codes (400 validation, 401 missing token, 502 upstream).
+- `src/main.rs` — `/transit/*` routes plus legacy `/metro/*` aliases.
+- Release binary `backend/target/release/makco`, run by `makco.service` on
+  `:8080` (enabled, auto-restart). Verified live at `http://163.123.236.154:8080`.
 
-Flutter app at `/home/makco/frontend/flutter`:
-- Rail Signage / Data Terminal UI (amber-on-black, split-flap boards).
-- Theme in `lib/theme/terminal_theme.dart`; screens in `lib/screens/`.
-- `flutter analyze` clean. APK builds (debug).
+Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.0+330:
+- **One-screen booking**: From/To station sheets, quantity, auto fare fetch,
+  one-tap repeat from saved recent trips. No booking wizard.
+- **State**: Riverpod providers for session, stations, tickets, recents and the
+  ride controller (`lib/state/`).
+- **Routing**: go_router with `/splash`, `/auth`, `/home`, `/ticket`, `/payment`;
+  `makco://app/ticket?ref=...` deep link.
+- **Tickets**: real scannable QR from the operator's `qrData` (`qr_flutter`),
+  ticket number, valid-till, polling for fresh bookings, shared `TicketTile`
+  across Home and Tickets. `/tickets` now lists bookings via
+  `frfs/booking/list`; booking-level `stations[]` supplies from/to names.
+- **Tickets tab**: All / Active / Past filters, pull-to-refresh, tap for ticket.
+- **Auth**: 10-digit phone, 4-digit OTP with autofill, auto-submit, resend timer.
+  Token/user id live in encrypted storage; old plain-preference values migrate.
+- **Offline**: last stations and tickets are cached; providers fall back when the
+  network fails. Tickets cache is cleared on sign-out.
+- **Stations**: 41 metro stations, search, favourites (star + filter) and a
+  "Near me" sort using device location; no bus UI.
+- **Fonts**: Bricolage Grotesque and Public Sans are bundled assets, no runtime
+  fetch and no first-launch font flash.
+- **Profile**: session-backed, server/version info, sign-out.
+- `Api` normalises bare JSON arrays from upstream (`stations`, `routes`, quotes,
+  tickets) under `data`, so all list endpoints decode consistently.
+- Tests: `test/app_smoke_test.dart` covers the auth boot, router, Home, station
+  picker, favourites filter and QR ticket. `flutter analyze` clean.
+- Release APK signed with `android/makco-release.jks` (alias `makco`), served at
+  `http://163.123.236.154/app-release.apk` from `/var/www/makco`.
 
-Android Kotlin app at `/home/makco/frontend/android`:
-- Same design language, Jetpack Compose.
-- `ui/theme/Terminal.kt` palette, `ui/components/TerminalComponents.kt` system.
-- Screens: Auth, Home (bus/metro picker), Booking, Payment, History, Profile.
-- `./gradlew assembleDebug` builds. Kotlin 2.0 + Compose compiler plugin.
-
-Docs: `docs/API_REFERENCE.md`, `docs/DESIGN_LANGUAGE.md`, `docs/SETUP.md`.
-Git repo initialized at `/home/makco`, initial commit on `main`.
-
-### Real API facts extracted from Chennai One bundle (verified in decompiled_fresh)
-- vehicle types: `BUS`, `BUS_HYBRID`, `METRO`, `METRO_V2`
-- endpoints: `/frfs/stations`, `/frfs/routes`, `/frfs/activeRoutes`,
-  `/frfs/route/{routeCode}/stops`, `/frfs/stations/possibleStops`,
-  `/frfs/search`, `/frfs/search/{id}/quote`, `/frfs/quote/{id}/confirm`,
-  `/frfs/booking/{id}/status`, `/frfs/ticket/verify`, `/profile`,
-  `/ticket/bookings/v2`
-- OTP is 4 digits. `vehicleType` must be JSON-encoded (`"METRO"`).
-- Admin phone 8190835624 gets `isMockPayment=true`.
+### Real API facts (re-verified live, 2026-10-24)
+- vehicle types accepted now: `METRO`, `SUBWAY`, `BUS`. `METRO_V2` and
+  `BUS_HYBRID` return 400.
+- `/frfs/activeRoutes` now requires `vehicleType`.
+- `/frfs/route/{code}/stops` and `/frfs/stations/possibleStops` return 404.
+- Chennai: 41 metro stations, 4 routes (BLUE_UP/DOWN, GREEN_*). BUS is empty.
+- OTP is 4 digits. Merchant/client that works: `NAMMA_YATRI`.
+- Payment is required for every account. A booking only gets a signed `qrData`
+  after Juspay reports success; there is no mock or admin shortcut.
 
 ---
 
 ## WHAT IS NEXT (roadmap)
 
-1. Push to GitHub — needs `gh auth login` (not currently logged in). Target:
-   `pandatern/makco` (new repo or new branch) + CI workflows for Rust + Flutter.
-2. End-to-end verification against live MovingTech API (needs a real OTP/token).
-3. Deploy backend behind nginx (`api.pandatern.tech`) + systemd.
-4. Optional: wire bus-mode specifics (active routes, route stops, possible stops)
-   into the UI beyond the generic station picker.
-5. Add scripts/test_api.py equivalent for the Rust backend.
+1. **End-to-end payment test** with any account (search → quote → confirm →
+   Juspay page → status `CONFIRMED` → ticket). Payment is universal; admin
+   bypasses have been removed. Blocked while live quotes are empty and until a
+   real ticket is funded.
+2. **Real CMRL gate scan** of a freshly issued QR.
+3. HTTPS for the API; raw IP HTTP remains for now (no trusted cert for an IP).
+4. Bus is deliberately out of scope until upstream returns Chennai data.
 
 ---
 
 ## WHERE THINGS ARE
 
-- New project root: `/home/makco`
+- Project root: `/home/makco`
 - Rust backend: `/home/makco/backend`
-  - build: `cd /home/makco/backend && cargo build`
-  - run: `./target/debug/makco` (port 8080, health at `GET /`)
-- Old repo (reference only, do not modify): `/srv/baymax/app/makco`
-- Old decompiled Chennai One app (for endpoint discovery):
-  `/srv/baymax/app/decompiled_fresh/assets/index.android.bundle`
+  - build: `cd /home/makco/backend && cargo build --release`
+  - run: `/home/makco/backend/target/release/makco` (port 8080, `GET /` health)
+  - service: `/etc/systemd/system/makco.service`
+- Flutter app: `/home/makco/frontend/flutter`
+  - SDK: `/opt/flutter`; Android SDK: `/opt/android-sdk` (platform 36)
+  - build: `cd /home/makco/frontend/flutter && flutter build apk --release`
+  - output: `build/app/outputs/flutter-apk/app-release.apk`
+  - tests: `flutter test`
+- nginx: `/etc/nginx/sites-available/makco_ip` serves `/var/www/makco`
+- Design spec: `/home/makco/docs/DESIGN.md`
+- Bundled fonts/licenses: `/home/makco/frontend/flutter/assets/fonts`
+- Offline cache: `lib/services/cache.dart`
+- Favourites: `lib/state/favourites.dart`
+- Location helper: `lib/services/location.dart`
+- CI: `/home/makco/.github/workflows/ci.yml`
+- Old repo (reference only): `/srv/baymax/app/makco`
+- Old decompiled Chennai One app: `/srv/baymax/app/decompiled_fresh/assets/index.android.bundle`
 - Conventions: `/home/makco/CONVENTIONS.md`, `/home/makco/AGENTS.md`
-- Old AGENTS (Nim repo): `/home/makco/AGENTS_MAKCO.md`
-- Old README: `/home/makco/README_OLD.md`
-
----
-
-## CONSTRAINTS & GOTCHAS
-
-- MovingTech upstream can send Content-Length mismatches (crashed old Nim
-  backend on admin mockPayment). reqwest handles this; keep timeouts short.
-- crates.io API is 403 from curl but static.crates.io works — cargo builds fine.
-- `/home` is not writable by baymax directly; `/home/makco` is owned by baymax.
-- OTP auth sends REAL SMS. Do not run scripts/test_api.py without consent.
-- Never commit real secrets. Admin phone/UUID stays in code as-is (matches old repo).

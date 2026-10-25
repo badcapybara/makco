@@ -1,141 +1,184 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../services/api_service.dart';
-import '../theme/terminal_theme.dart';
-import 'home_screen.dart';
+import 'package:makco/services/api_service.dart';
+import 'package:makco/state/session.dart';
+import 'package:makco/theme/madras_flow.dart';
+import 'package:makco/widgets/madras_components.dart';
 
-class AuthScreen extends StatefulWidget {
-  final ApiService api;
-  const AuthScreen({super.key, required this.api});
+/// Phone + 4-digit OTP sign-in. Navigation is owned by the router.
+class AuthScreen extends ConsumerStatefulWidget {
+  const AuthScreen({super.key});
 
   @override
-  State<AuthScreen> createState() => _AuthScreenState();
+  ConsumerState<AuthScreen> createState() => _AuthScreenState();
 }
 
-class _AuthScreenState extends State<AuthScreen> {
+class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _phone = TextEditingController();
   final _otp = TextEditingController();
-  bool _sending = false;
-  bool _verifying = false;
   String? _authId;
-  String? _error;
+  bool _busy = false;
+  Timer? _resendTimer;
+  int _resendIn = 0;
 
-  Future<void> _sendOtp() async {
-    final phone = _phone.text.trim();
-    if (phone.length != 10) {
-      setState(() => _error = 'INVALID PHONE. 10 DIGITS REQUIRED');
+  @override
+  void dispose() {
+    _phone.dispose();
+    _otp.dispose();
+    _resendTimer?.cancel();
+    super.dispose();
+  }
+
+  String get _digits => _phone.text.replaceAll(RegExp(r'\D'), '');
+
+  void _startResendTimer() {
+    _resendTimer?.cancel();
+    setState(() => _resendIn = 30);
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      if (_resendIn <= 1) {
+        timer.cancel();
+        setState(() => _resendIn = 0);
+      } else {
+        setState(() => _resendIn--);
+      }
+    });
+  }
+
+  Future<void> _sendCode({bool resend = false}) async {
+    if (_digits.length != 10) {
+      _toast('Enter your 10-digit mobile number.');
       return;
     }
-    setState(() {
-      _sending = true;
-      _error = null;
-    });
+    setState(() => _busy = true);
     try {
-      final session = await widget.api.initiateAuth(phone);
+      final session = await Api.requestOtp(_digits);
+      if (!mounted) return;
       if (session.authId == null) {
-        setState(() => _error = 'AUTH FAILED');
-      } else {
-        setState(() => _authId = session.authId);
+        throw ApiException('Could not start sign-in. Try again.');
       }
-    } catch (e) {
-      setState(() => _error = 'NETWORK ERROR');
-    } finally {
-      setState(() => _sending = false);
+      _otp.clear();
+      _startResendTimer();
+      setState(() {
+        _authId = session.authId;
+        _busy = false;
+      });
+      if (resend) _toast('A new code is on its way.');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _toast(e.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _toast('Could not reach the server. Check your connection.');
     }
   }
 
-  Future<void> _verifyOtp() async {
-    final otp = _otp.text.trim();
-    if (otp.length != 4) {
-      setState(() => _error = 'OTP MUST BE 4 DIGITS');
+  Future<void> _verify() async {
+    final authId = _authId;
+    if (authId == null) return;
+    if (_otp.text.trim().length != 4) {
+      _toast('Enter the 4-digit code.');
       return;
     }
-    setState(() {
-      _verifying = true;
-      _error = null;
-    });
+    if (_busy) return;
+    setState(() => _busy = true);
     try {
-      final session = await widget.api.verifyAuth(_authId!, otp);
-      if (session.token == null) {
-        setState(() => _error = 'INVALID OTP');
-      } else {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('token', session.token!);
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(MaterialPageRoute(
-          builder: (_) => HomeScreen(api: widget.api),
-        ));
+      final session = await Api.verifyOtp(authId, _otp.text.trim());
+      final token = session.token;
+      if (token == null) {
+        throw ApiException('Code verified, but no token came back. Try again.');
       }
-    } catch (e) {
-      setState(() => _error = 'VERIFY ERROR');
-    } finally {
-      setState(() => _verifying = false);
+      await ref.read(sessionProvider.notifier).signedIn(token, session.userId);
+      // The router redirects to /home when the session flips.
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _toast(e.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _toast('Could not verify the code. Check your connection.');
     }
+  }
+
+  void _changeNumber() {
+    _resendTimer?.cancel();
+    _otp.clear();
+    setState(() {
+      _authId = null;
+      _busy = false;
+      _resendIn = 0;
+    });
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
   Widget build(BuildContext context) {
+    final verifying = _authId != null;
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SizedBox(height: 20),
-              const LiveIndicator('AUTH GATEWAY OPEN'),
+              if (verifying)
+                IconButton(
+                  onPressed: _changeNumber,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  color: Mf.ink,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 40,
+                    minHeight: 40,
+                  ),
+                )
+              else
+                const SizedBox(height: 28),
+              const SizedBox(height: 12),
+              const GopuramMark(width: 54, color: Mf.amber),
               const SizedBox(height: 16),
-              const SignHeader(title: 'OPERATOR AUTH'),
-              const SizedBox(height: 24),
-              TerminalPanel(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('ENTER MOBILE NUMBER', style: Terminal.mono(12, color: Terminal.dim, spacing: 1.5)),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _phone,
-                      keyboardType: TextInputType.phone,
-                      maxLength: 10,
-                      style: Terminal.mono(20, color: Terminal.amber, weight: FontWeight.w700),
-                      decoration: _dec('+91 -------'),
-                    ),
-                    const SizedBox(height: 8),
-                    TermButton(
-                      label: _authId == null ? 'REQUEST OTP' : 'RESEND OTP',
-                      onPressed: _sending ? null : _sendOtp,
-                    ),
-                    if (_authId != null) ...[
-                      const SizedBox(height: 20),
-                      Text('ENTER 4-DIGIT OTP', style: Terminal.mono(12, color: Terminal.dim, spacing: 1.5)),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _otp,
-                        keyboardType: TextInputType.number,
-                        maxLength: 4,
-                        style: Terminal.mono(24, color: Terminal.amber, weight: FontWeight.w700),
-                        decoration: _dec('_ _ _ _'),
-                      ),
-                      const SizedBox(height: 8),
-                      TermButton(
-                        label: _verifying ? 'VERIFYING...' : 'VERIFY & CONNECT',
-                        color: Terminal.green,
-                        onPressed: _verifying ? null : _verifyOtp,
-                      ),
-                    ],
-                    if (_error != null) ...[
-                      const SizedBox(height: 16),
-                      Text('!! $_error', style: Terminal.mono(13, color: Terminal.red, weight: FontWeight.w700)),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
+              Text('MAKCO', style: Mf.display(30, color: Mf.ink)),
+              const SizedBox(height: 4),
               Text(
-                'SECURE CHANNEL: MOVINGTECH >> JUSPAY\nTOKEN: PERSISTENT SESSION',
-                style: Terminal.mono(11, color: Terminal.dim, height: 1.6),
+                'Chennai metro, minus the queue.',
+                style: Mf.body(14, color: Mf.inkMuted),
               ),
+              const SizedBox(height: 34),
+              Text(
+                verifying ? 'Enter your code' : 'Sign in with your number',
+                style: Mf.display(26, color: Mf.ink),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                verifying
+                    ? 'We sent a 4-digit code to +91 ${_phone.text}.'
+                    : 'No passwords. Just a quick code.',
+                style: Mf.body(14, color: Mf.inkMuted),
+              ),
+              const SizedBox(height: 24),
+              TicketCard(
+                padding: const EdgeInsets.all(18),
+                child: verifying ? _otpForm() : _phoneForm(),
+              ),
+              if (!verifying) ...[
+                const SizedBox(height: 20),
+                Text(
+                  'By continuing you agree to ride with a valid metro ticket.',
+                  style: Mf.body(12, color: Mf.inkFaint),
+                ),
+              ],
             ],
           ),
         ),
@@ -143,17 +186,141 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  InputDecoration _dec(String hint) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: Terminal.mono(16, color: Terminal.dim),
-      counterText: '',
-      enabledBorder: const UnderlineInputBorder(
-        borderSide: BorderSide(color: Terminal.hairline),
-      ),
-      focusedBorder: const UnderlineInputBorder(
-        borderSide: BorderSide(color: Terminal.amber, width: 2),
-      ),
+  Widget _phoneForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Mobile number',
+          style: Mf.body(13, color: Mf.inkMuted, weight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _phone,
+          keyboardType: TextInputType.phone,
+          autofillHints: const [AutofillHints.telephoneNumber],
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(10),
+          ],
+          style: Mf.body(20, weight: FontWeight.w700),
+          decoration: InputDecoration(
+            prefixText: '+91  ',
+            prefixStyle: Mf.body(
+              18,
+              color: Mf.inkMuted,
+              weight: FontWeight.w600,
+            ),
+            hintText: '98400 00000',
+            hintStyle: Mf.body(18, color: Mf.inkFaint),
+            filled: true,
+            fillColor: Mf.surfaceAlt,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 16,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Mf.amber, width: 2),
+            ),
+          ),
+          onSubmitted: (_) => _sendCode(),
+        ),
+        const SizedBox(height: 18),
+        PrimaryButton(
+          'Send me the code',
+          icon: Icons.sms_outlined,
+          busy: _busy,
+          onPressed: _busy ? null : _sendCode,
+        ),
+      ],
+    );
+  }
+
+  Widget _otpForm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '4-digit code',
+          style: Mf.body(13, color: Mf.inkMuted, weight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _otp,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          autofillHints: const [AutofillHints.oneTimeCode],
+          textAlign: TextAlign.center,
+          inputFormatters: [
+            FilteringTextInputFormatter.digitsOnly,
+            LengthLimitingTextInputFormatter(4),
+          ],
+          style: Mf.display(32, color: Mf.ink).copyWith(letterSpacing: 18),
+          decoration: InputDecoration(
+            counterText: '',
+            hintText: '••••',
+            hintStyle: Mf.display(
+              30,
+              color: Mf.inkFaint,
+            ).copyWith(letterSpacing: 18),
+            filled: true,
+            fillColor: Mf.surfaceAlt,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 16,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: const BorderSide(color: Mf.amber, width: 2),
+            ),
+          ),
+          onChanged: (value) {
+            setState(() {});
+            if (value.length == 4) _verify();
+          },
+          onSubmitted: (_) => _verify(),
+        ),
+        const SizedBox(height: 18),
+        PrimaryButton(
+          'Verify & continue',
+          icon: Icons.check_rounded,
+          busy: _busy,
+          onPressed: _busy ? null : _verify,
+        ),
+        const SizedBox(height: 6),
+        Center(
+          child: _resendIn > 0
+              ? Text(
+                  'Resend in 0:${_resendIn.toString().padLeft(2, '0')}',
+                  style: Mf.body(13, color: Mf.inkFaint),
+                )
+              : TextButton(
+                  onPressed: _busy ? null : () => _sendCode(resend: true),
+                  style: TextButton.styleFrom(foregroundColor: Mf.teal),
+                  child: Text(
+                    'Resend code',
+                    style: Mf.body(13, color: Mf.teal, weight: FontWeight.w700),
+                  ),
+                ),
+        ),
+      ],
     );
   }
 }

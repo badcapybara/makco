@@ -1,104 +1,161 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import '../models/models.dart';
-import '../services/api_service.dart';
-import '../theme/terminal_theme.dart';
-import 'ticket_screen.dart';
+import 'package:makco/models/models.dart';
+import 'package:makco/services/api_service.dart';
+import 'package:makco/theme/madras_flow.dart';
+import 'package:makco/widgets/madras_components.dart';
 
+/// Hosts the payment webview and watches for booking confirmation.
 class PaymentScreen extends StatefulWidget {
-  final ApiService api;
-  final TransitMode mode;
   final Booking booking;
-  const PaymentScreen({super.key, required this.api, required this.mode, required this.booking});
+
+  const PaymentScreen({super.key, required this.booking});
 
   @override
   State<PaymentScreen> createState() => _PaymentScreenState();
 }
 
 class _PaymentScreenState extends State<PaymentScreen> {
-  Booking _booking = Booking(bookingId: '', status: 'NEW', price: 0);
+  late final WebViewController _controller;
+  Timer? _timer;
+  bool _webLoading = true;
+  bool _finished = false;
+  bool _checking = false;
 
   @override
   void initState() {
     super.initState();
-    _booking = widget.booking;
-    _startPolling();
-  }
-
-  Future<void> _startPolling() async {
-    var paid = false;
-    while (mounted && !paid) {
-      await Future.delayed(const Duration(seconds: 5));
-      try {
-        final b = await widget.api
-            .getBookingStatus(widget.mode, 'chennai', _booking.bookingId);
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (_) {
+            if (mounted) setState(() => _webLoading = true);
+          },
+          onPageFinished: (_) {
+            if (mounted) setState(() => _webLoading = false);
+          },
+        ),
+      );
+    final url = widget.booking.paymentUrl;
+    if (url.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() => _booking = b);
-        if (b.status == 'CONFIRMED' || b.tickets.isNotEmpty) {
-          paid = true;
-          Navigator.of(context).pushReplacement(MaterialPageRoute(
-            builder: (_) => TicketScreen(
-              api: widget.api,
-              mode: widget.mode,
-              bookingId: b.bookingId,
-            ),
-          ));
-        }
-      } catch (_) {}
+        _finish();
+        _snack('Payment link is missing. Please book again.');
+        if (context.canPop()) context.pop();
+      });
+    } else {
+      _controller.loadRequest(Uri.parse(url));
+      _timer = Timer.periodic(
+        const Duration(seconds: 2),
+        (_) => _checkStatus(),
+      );
     }
   }
 
   @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _checkStatus() async {
+    if (_finished || _checking) return;
+    _checking = true;
+    Booking updated;
+    try {
+      updated = await Api.bookingStatus(widget.booking.bookingId);
+    } catch (_) {
+      _checking = false;
+      return;
+    }
+    _checking = false;
+    if (!mounted || _finished) return;
+    if (updated.status == 'CONFIRMED' || updated.confirmed) {
+      _finish();
+      context.pushReplacement('/ticket', extra: updated);
+      return;
+    }
+    final status = updated.status.toUpperCase();
+    if (status == 'CANCELLED' ||
+        status == 'FAILED' ||
+        status == 'EXPIRED' ||
+        status == 'PAYMENT_FAILED') {
+      _finish();
+      _snack('Payment was not completed. Your ticket was not issued.');
+      if (context.canPop()) context.pop();
+    }
+  }
+
+  void _finish() {
+    _finished = true;
+    _timer?.cancel();
+  }
+
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(msg, style: Mf.body(14, color: Mf.surface)),
+        ),
+      );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final url = _booking.paymentUrl;
     return Scaffold(
+      backgroundColor: Mf.paper,
       appBar: AppBar(
-        title: Text('PAYMENT // JUSPAY', style: Terminal.mono(15, color: Terminal.white, spacing: 2)),
+        backgroundColor: Mf.paper,
+        title: Text('Payment', style: Mf.display(20)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'Close',
+            onPressed: () {
+              _finish();
+              if (context.canPop()) context.pop();
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            color: Terminal.panelLift,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            color: Mf.surfaceAlt,
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    const LiveIndicator('PAYMENT PENDING'),
-                    const Spacer(),
-                    Text('₹${_booking.price}', style: Terminal.mono(24, color: Terminal.amber, weight: FontWeight.w700)),
-                  ],
+                Text(
+                  'Waiting for payment…',
+                  style: Mf.body(
+                    14,
+                    color: Mf.inkMuted,
+                    weight: FontWeight.w600,
+                  ),
                 ),
-                const SizedBox(height: 6),
-                Text('BOOKING ${_booking.bookingId}', style: Terminal.mono(10, color: Terminal.dim, spacing: 1)),
-                Text('STATUS: ${_booking.status}', style: Terminal.mono(12, color: Terminal.cyan, spacing: 1.5)),
+                const Spacer(),
+                const StatusChip('PAYMENT', kind: StatusKind.info),
               ],
             ),
           ),
           Expanded(
-            child: url.isNotEmpty
-                ? WebViewWidget(
-                    controller: WebViewController()
-                      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-                      ..loadRequest(Uri.parse(url)),
-                  )
-                : Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('AWATING PAYMENT ORDER...', style: TextStyle(fontFamily: 'monospace', color: Terminal.green)),
-                        const SizedBox(height: 16),
-                        TermButton(
-                          label: 'REFRESH',
-                          color: Terminal.amber,
-                          onPressed: () => setState(() {}),
-                        ),
-                      ],
-                    ),
+            child: Stack(
+              children: [
+                WebViewWidget(controller: _controller),
+                if (_webLoading)
+                  const Center(
+                    child: CircularProgressIndicator(color: Mf.teal),
                   ),
+              ],
+            ),
           ),
         ],
       ),
