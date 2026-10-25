@@ -23,6 +23,40 @@ fn api_error(status: StatusCode, code: &str, message: impl Into<String>) -> ApiE
     )
 }
 
+fn upstream_error(value: &Value) -> Option<(StatusCode, String, String)> {
+    let code = value.get("errorCode").and_then(|v| v.as_str())?;
+    let message = value
+        .get("errorMessage")
+        .or_else(|| value.get("message"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("Upstream request failed");
+    let status = match code {
+        "INVALID_TOKEN" => StatusCode::UNAUTHORIZED,
+        "BOOKING_NOT_FOUND" | "INVALID_BOOKING_ID" | "INVALID_QUOTE_ID" => StatusCode::NOT_FOUND,
+        _ => StatusCode::BAD_GATEWAY,
+    };
+    Some((status, code.to_string(), message.to_string()))
+}
+
+fn require_booking_status(value: &Value) -> Result<(), ApiError> {
+    let has_booking = value
+        .get("bookingId")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty());
+    let has_status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty());
+    if !has_booking || !has_status {
+        return Err(api_error(
+            StatusCode::BAD_GATEWAY,
+            "STATUS_UNAVAILABLE",
+            "The operator returned no booking status. Please try again.",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct AuthBody {
     pub mobile_number: Option<String>,
@@ -103,7 +137,7 @@ pub async fn health() -> impl IntoResponse {
     Json(json!({
         "status": "ok",
         "app": "Makco",
-        "version": "3.3.1",
+        "version": "3.3.2",
         "modes": ["bus", "metro"]
     }))
 }
@@ -308,9 +342,41 @@ pub async fn confirm_booking(
         .await
     {
         Ok(r) => {
+            if let Some((status, code, message)) = upstream_error(&r) {
+                tracing::warn!(
+                    booking_id = %r.get("bookingId").and_then(|v| v.as_str()).unwrap_or(""),
+                    upstream_code = %code,
+                    upstream_message = %message,
+                    "booking confirm failed upstream"
+                );
+                return Err(api_error(
+                    status,
+                    "CONFIRM_FAILED",
+                    format!("{code}: {message}"),
+                ));
+            }
+            if r.get("bookingId").and_then(|v| v.as_str()).is_none() {
+                tracing::warn!(body = ?r, "booking confirm returned no booking");
+                return Err(api_error(
+                    StatusCode::BAD_GATEWAY,
+                    "CONFIRM_FAILED",
+                    "The operator did not create a booking. Please try again.",
+                ));
+            }
             tracing::info!(
                 booking_id = %r.get("bookingId").and_then(|v| v.as_str()).unwrap_or(""),
                 status = %r.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                payment = %r
+                    .get("payment")
+                    .and_then(|p| p.get("status"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                payment_order = %r
+                    .get("payment")
+                    .and_then(|p| p.get("paymentOrder"))
+                    .and_then(|p| p.get("status"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
                 has_payment_link = r
                     .get("payment")
                     .and_then(|p| p.get("paymentOrder"))
@@ -343,6 +409,23 @@ pub async fn get_booking_status(
         .await
     {
         Ok(r) => {
+            if let Some((status, code, message)) = upstream_error(&r) {
+                tracing::warn!(
+                    booking_id = %booking_id,
+                    upstream_code = %code,
+                    upstream_message = %message,
+                    "booking status failed upstream"
+                );
+                return Err(api_error(
+                    status,
+                    "STATUS_FAILED",
+                    format!("{code}: {message}"),
+                ));
+            }
+            if let Err(e) = require_booking_status(&r) {
+                tracing::warn!(booking_id = %booking_id, body = ?r, "booking status missing");
+                return Err(e);
+            }
             tracing::info!(
                 booking_id = %booking_id,
                 status = %r.get("status").and_then(|v| v.as_str()).unwrap_or(""),
@@ -351,6 +434,19 @@ pub async fn get_booking_status(
                     .and_then(|p| p.get("status"))
                     .and_then(|v| v.as_str())
                     .unwrap_or(""),
+                payment_order = %r
+                    .get("payment")
+                    .and_then(|p| p.get("paymentOrder"))
+                    .and_then(|p| p.get("status"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                has_payment_link = r
+                    .get("payment")
+                    .and_then(|p| p.get("paymentOrder"))
+                    .and_then(|p| p.get("payment_links"))
+                    .and_then(|p| p.get("web"))
+                    .and_then(|v| v.as_str())
+                    .is_some(),
                 tickets = r
                     .get("tickets")
                     .and_then(|v| v.as_array())
@@ -373,14 +469,7 @@ pub async fn refresh_booking_status(
     Query(q): Query<CtyQuery>,
     headers: HeaderMap,
 ) -> ApiResult {
-    let token = require_token(&headers)?;
-    let mode = mode_of(&q);
-    let city = city_of(&q);
-    client()
-        .mt_get_booking_status(&token, &city, &mode, &booking_id)
-        .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "REFRESH_FAILED", e.to_string()))
+    get_booking_status(Path(booking_id), Query(q), headers).await
 }
 
 pub async fn verify_ticket(
@@ -440,4 +529,38 @@ fn client() -> &'static MtClient {
 
 pub fn init_client(cfg: &Config) {
     let _ = CLIENT.set(MtClient::new(cfg).expect("failed to build MovingTech client"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn booking_status_requires_booking_and_status_fields() {
+        assert!(require_booking_status(&json!({})).is_err());
+        assert!(require_booking_status(&json!({"bookingId": "b1"})).is_err());
+        assert!(require_booking_status(&json!({"status": "NEW"})).is_err());
+        assert!(require_booking_status(&json!({"bookingId": "b1", "status": "NEW"})).is_ok());
+    }
+
+    #[test]
+    fn upstream_auth_errors_map_to_unauthorized() {
+        let (status, code, _) =
+            upstream_error(&json!({"errorCode": "INVALID_TOKEN", "errorMessage": "bad"})).unwrap();
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(code, "INVALID_TOKEN");
+    }
+
+    #[test]
+    fn upstream_missing_booking_maps_to_not_found() {
+        let (status, _, _) =
+            upstream_error(&json!({"errorCode": "BOOKING_NOT_FOUND", "errorMessage": "gone"}))
+                .unwrap();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn missing_error_code_is_not_an_upstream_error() {
+        assert!(upstream_error(&json!({"bookingId": "b1", "status": "NEW"})).is_none());
+    }
 }

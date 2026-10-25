@@ -29,6 +29,7 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
   Timer? _timer;
   int _tries = 0;
   bool _timedOut = false;
+  bool _notFound = false;
   String? _pollError;
   static const _maxTries = 30;
 
@@ -117,6 +118,7 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
     _timer?.cancel();
     _tries = 0;
     _timedOut = false;
+    _notFound = false;
     _pollError = null;
     unawaited(_poll());
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
@@ -139,6 +141,18 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
         booking.bookingId,
         mode: TransitMode.metro.key,
       );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      final notFound = e.status == 404;
+      setState(() {
+        _notFound = notFound;
+        _pollError = notFound
+            ? 'This booking is no longer available.'
+            : e.message;
+        _timedOut = notFound || _tries >= _maxTries;
+      });
+      if (_timedOut) _timer?.cancel();
+      return;
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -153,6 +167,7 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
     final status = updated.status.toUpperCase();
     final failed =
         updated.paymentFailed ||
+        updated.expired ||
         status == 'CANCELLED' ||
         status == 'FAILED' ||
         status == 'EXPIRED' ||
@@ -173,7 +188,9 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
     final booking = _booking;
     if (booking == null || _ready) return false;
     final status = booking.status.toUpperCase();
-    return booking.paymentFailed ||
+    return _notFound ||
+        booking.paymentFailed ||
+        booking.expired ||
         status == 'CANCELLED' ||
         status == 'FAILED' ||
         status == 'EXPIRED' ||

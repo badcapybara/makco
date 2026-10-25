@@ -74,9 +74,16 @@ class HomeScreen extends ConsumerWidget {
       if (!context.mounted) return;
       if (booking.paymentUrl.isNotEmpty) {
         context.push('/payment', extra: booking);
-      } else {
+      } else if (booking.confirmed ||
+          booking.paymentFailed ||
+          booking.expired) {
         ref.invalidate(ticketsProvider);
         context.push('/ticket', extra: booking);
+      } else {
+        _snack(
+          context,
+          'Payment is still being prepared. Tap Pay again in a moment.',
+        );
       }
     } on ApiException catch (e) {
       if (context.mounted) _snack(context, e.message);

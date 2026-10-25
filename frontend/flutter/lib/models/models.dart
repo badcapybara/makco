@@ -98,26 +98,69 @@ class Booking {
 
   String get paymentUrl {
     try {
-      return (payment?['paymentOrder']?['payment_links']?['web'] as String?) ??
-          '';
+      final order = payment?['paymentOrder'];
+      final links = order is Map ? order['payment_links'] : null;
+      final web = links is Map ? links['web'] : null;
+      if (web is String && web.isNotEmpty) return web;
+      final direct = payment?['payment_links'];
+      final directWeb = direct is Map ? direct['web'] : null;
+      return directWeb is String ? directWeb : '';
     } catch (_) {
       return '';
     }
   }
 
-  String get paymentStatus =>
-      (payment?['status'] as String?)?.toUpperCase() ?? '';
+  String get paymentOrderStatus {
+    try {
+      final order = payment?['paymentOrder'];
+      if (order is Map) {
+        return (order['status'] as String?)?.toUpperCase() ?? '';
+      }
+    } catch (_) {}
+    return '';
+  }
 
-  bool get paymentFailed =>
-      paymentStatus == 'FAILURE' ||
-      paymentStatus == 'FAILED' ||
-      paymentStatus == 'CANCELLED';
+  String get paymentStatus {
+    final direct = (payment?['status'] as String?)?.toUpperCase() ?? '';
+    return direct.isNotEmpty ? direct : paymentOrderStatus;
+  }
+
+  bool get paymentFailed {
+    const failed = {
+      'FAILURE',
+      'FAILED',
+      'CANCELLED',
+      'DECLINED',
+      'EXPIRED',
+      'AUTHENTICATION_FAILED',
+      'AUTHORIZATION_FAILED',
+      'PAYMENT_DECLINED',
+      'PAYMENT_FAILED',
+      'TIMED_OUT',
+    };
+    return failed.contains(paymentStatus) ||
+        failed.contains(paymentOrderStatus);
+  }
+
+  bool get paymentSucceeded =>
+      paymentStatus == 'SUCCESS' ||
+      paymentStatus == 'SUCCEEDED' ||
+      paymentStatus == 'CAPTURED';
+
+  DateTime? get validTillTime => DateTime.tryParse(validTill ?? '');
+
+  bool get expired {
+    final until = validTillTime;
+    return until != null && until.isBefore(DateTime.now());
+  }
 
   factory Booking.fromJson(Map<String, dynamic> j) => Booking(
     bookingId: (j['bookingId'] as String?) ?? '',
     status: (j['status'] as String?) ?? 'NEW',
     price: (j['price'] as num?) ?? 0,
-    payment: j['payment'] as Map<String, dynamic>?,
+    payment: j['payment'] is Map
+        ? Map<String, dynamic>.from(j['payment'] as Map)
+        : null,
     tickets: (j['tickets'] as List?) ?? const [],
     stations: (j['stations'] as List?) ?? const [],
   );

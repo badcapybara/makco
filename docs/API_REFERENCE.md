@@ -42,7 +42,7 @@ Note (2026-10): upstream now accepts only `METRO`, `SUBWAY`, `BUS`.
 GET /
 ```
 ```json
-{"app":"Makco","modes":["bus","metro"],"status":"ok","version":"3.3.1"}
+{"app":"Makco","modes":["bus","metro"],"status":"ok","version":"3.3.2"}
 ```
 
 ### Auth
@@ -115,7 +115,10 @@ GET /transit/booking/{bookingId}/refresh?city=chennai&mode=metro
 ```
 Returns booking + Juspay payment order. Seen statuses: `NEW`, `APPROVED`,
 `PAYMENT_PENDING`, `CONFIRMED`, `CANCELLED`. `APPROVED`/`PAYMENT_PENDING`
-bookings have `tickets: []` until payment completes.
+bookings have `tickets: []` until payment completes. The payment link can be
+created asynchronously after confirm: poll this endpoint until
+`payment.paymentOrder.payment_links.web` appears. Empty or error responses now
+return HTTP 404/502 instead of an empty booking.
 
 ### Ticket Verify
 
@@ -149,6 +152,14 @@ Payment is universal: every account, including operator test numbers, goes
 through Juspay. Confirm returns a booking whose `payment.paymentOrder` carries
 the hosted payment link; the ticket and signed `qrData` are issued only after
 upstream reports the payment as successful.
+
+The link may be created a few seconds after confirm. Clients should poll
+`GET /transit/booking/{bookingId}/status` until
+`payment.paymentOrder.payment_links.web` appears. The Juspay page redirects to
+UPI app schemes (`phonepe://`, `upi://`, `tez://`, `paytmmp://`, `bhim://`,
+`credpay://`); a webview must hand those to the OS instead of loading them, or
+Android shows `ERR_UNKNOWN_URL_SCHEME`. Booking status, not the webview, decides
+when the ticket is issued.
 
 Makco no longer sends `isMockPayment`, does not detect admin accounts, and has
 no payment bypass. A valid metro QR cannot be minted locally — `qrData` is

@@ -187,4 +187,43 @@ void main() {
     expect(find.text('Ticket ready'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  test('booking reads the Juspay payment link and status', () {
+    final booking = Booking.fromJson({
+      'bookingId': 'b2',
+      'status': 'PAYMENT_PENDING',
+      'price': 24,
+      'payment': {
+        'status': 'PENDING',
+        'paymentOrder': {
+          'status': 'PENDING',
+          'payment_links': {
+            'web': 'https://payments.juspay.in/payment-page/order/o1',
+          },
+        },
+      },
+      'tickets': <dynamic>[],
+    });
+
+    expect(booking.paymentUrl, contains('payments.juspay.in'));
+    expect(booking.paymentStatus, 'PENDING');
+    expect(booking.paymentOrderStatus, 'PENDING');
+    expect(booking.paymentFailed, isFalse);
+    expect(booking.paymentSucceeded, isFalse);
+  });
+
+  test('failed payment states are terminal', () {
+    for (final status in ['FAILED', 'DECLINED', 'CANCELLED', 'EXPIRED']) {
+      final booking = Booking(
+        bookingId: 'b3',
+        status: 'PAYMENT_PENDING',
+        price: 24,
+        payment: {
+          'status': status,
+          'paymentOrder': {'status': status},
+        },
+      );
+      expect(booking.paymentFailed, isTrue, reason: status);
+    }
+  });
 }

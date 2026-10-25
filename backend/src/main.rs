@@ -84,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Makco v3.3.1 serving metro transit API at http://{addr}");
+    tracing::info!("Makco v3.3.2 serving metro transit API at http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }

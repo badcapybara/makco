@@ -24,7 +24,7 @@
     "api_base": "http://163.123.236.154:8080",
     "state": "Riverpod 3",
     "routing": "go_router",
-    "version": "3.3.2+332"
+    "version": "3.3.3+333"
   },
   "deploy": {
     "service": "makco.service",

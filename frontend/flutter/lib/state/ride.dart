@@ -210,11 +210,55 @@ class RideController extends Notifier<RideState> {
             ),
           );
       ref.invalidate(ticketsProvider);
-      return booking;
+      final prepared = await _waitForPaymentLink(booking);
+      return prepared;
     } finally {
       state = state.copyWith(confirmingQuoteId: null);
     }
   }
+}
+
+/// The operator creates the Juspay order asynchronously after confirm. Poll
+/// briefly so the caller gets a real link instead of a booking that is still
+/// being prepared.
+Future<Booking> _waitForPaymentLink(Booking booking) async {
+  if (booking.bookingId.isEmpty ||
+      booking.paymentUrl.isNotEmpty ||
+      booking.confirmed ||
+      booking.paymentFailed) {
+    return booking;
+  }
+  var latest = booking;
+  for (var attempt = 0; attempt < 12; attempt++) {
+    await Future<void>.delayed(const Duration(seconds: 1));
+    try {
+      latest = await Api.bookingStatus(
+        booking.bookingId,
+        mode: TransitMode.metro.key,
+      );
+    } catch (_) {
+      continue;
+    }
+    if (latest.paymentUrl.isNotEmpty ||
+        latest.confirmed ||
+        latest.paymentFailed ||
+        latest.expired ||
+        _terminalStatus(latest.status)) {
+      return latest;
+    }
+  }
+  return latest;
+}
+
+bool _terminalStatus(String status) {
+  const terminal = {
+    'CANCELLED',
+    'FAILED',
+    'EXPIRED',
+    'PAYMENT_FAILED',
+    'PAYMENT_PENDING_FAILED',
+  };
+  return terminal.contains(status.toUpperCase());
 }
 
 final rideProvider = NotifierProvider<RideController, RideState>(
