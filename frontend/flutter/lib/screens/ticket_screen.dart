@@ -126,6 +126,13 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
 
   Future<void> _retryQr() async => _startPollingIfNeeded();
 
+  void _openPayment() {
+    final booking = _booking;
+    if (booking == null || booking.paymentUrl.isEmpty) return;
+    _timer?.cancel();
+    context.pushReplacement('/payment', extra: booking);
+  }
+
   Future<void> _poll() async {
     final booking = _booking;
     if (booking == null) return;
@@ -435,6 +442,13 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
                                     textAlign: TextAlign.center,
                                   ),
                                   const SizedBox(height: 10),
+                                  if (_booking!.paymentUrl.isNotEmpty)
+                                    GhostButton(
+                                      'Complete payment',
+                                      onPressed: _openPayment,
+                                    ),
+                                  if (_booking!.paymentUrl.isNotEmpty)
+                                    const SizedBox(height: 8),
                                   GhostButton(
                                     'Check again',
                                     onPressed: _retryQr,
@@ -467,6 +481,13 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
                                     Text(
                                       _waitingStatus,
                                       style: Mf.body(12, color: Mf.inkFaint),
+                                    ),
+                                  ],
+                                  if (_booking!.paymentUrl.isNotEmpty) ...[
+                                    const SizedBox(height: 12),
+                                    GhostButton(
+                                      'Complete payment',
+                                      onPressed: _openPayment,
                                     ),
                                   ],
                                 ],

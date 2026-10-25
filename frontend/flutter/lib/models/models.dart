@@ -100,14 +100,16 @@ class Booking {
     try {
       final order = payment?['paymentOrder'];
       final links = order is Map ? order['payment_links'] : null;
-      final web = links is Map ? links['web'] : null;
-      if (web is String && web.isNotEmpty) return web;
       final direct = payment?['payment_links'];
-      final directWeb = direct is Map ? direct['web'] : null;
-      return directWeb is String ? directWeb : '';
-    } catch (_) {
-      return '';
-    }
+      for (final source in [links, direct]) {
+        if (source is! Map) continue;
+        for (final key in const ['web', 'mobile']) {
+          final link = source[key];
+          if (link is String && link.isNotEmpty) return link;
+        }
+      }
+    } catch (_) {}
+    return '';
   }
 
   String get paymentOrderStatus {
