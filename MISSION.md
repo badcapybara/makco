@@ -49,7 +49,7 @@ Backend (Rust) at `/home/makco/backend`:
 - Release binary `backend/target/release/makco`, run by `makco.service` on
   `:8080` (enabled, auto-restart). Verified live at `http://163.123.236.154:8080`.
 
-Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.1+331:
+Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.2+332:
 - **One-screen booking**: From/To station sheets, quantity, auto fare fetch,
   one-tap repeat from saved recent trips. No booking wizard.
 - **State**: Riverpod providers for session, stations, tickets, recents and the

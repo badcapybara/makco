@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:makco/models/models.dart';
@@ -39,6 +40,18 @@ class _PaymentScreenState extends State<PaymentScreen> {
           onPageFinished: (_) {
             if (mounted) setState(() => _webLoading = false);
           },
+          onNavigationRequest: (request) {
+            final uri = Uri.tryParse(request.url);
+            final scheme = uri?.scheme.toLowerCase() ?? '';
+            if (scheme == 'http' ||
+                scheme == 'https' ||
+                scheme == 'about' ||
+                scheme == 'data') {
+              return NavigationDecision.navigate;
+            }
+            unawaited(_openExternal(request.url));
+            return NavigationDecision.prevent;
+          },
         ),
       );
     final url = widget.booking.paymentUrl;
@@ -62,6 +75,20 @@ class _PaymentScreenState extends State<PaymentScreen> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _openExternal(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    var opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      opened = false;
+    }
+    if (!opened && mounted) {
+      _snack('No payment app found for this link. Choose another method.');
+    }
   }
 
   Future<void> _checkStatus() async {

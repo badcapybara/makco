@@ -87,7 +87,7 @@ class ProfileScreen extends ConsumerWidget {
               ),
               ('Mode', 'Chennai Metro'),
               ('Server', Api.baseUrl.replaceFirst('http://', '')),
-              ('Version', '3.3.1 (331)'),
+              ('Version', '3.3.2 (332)'),
             ],
           ),
           const SizedBox(height: 26),

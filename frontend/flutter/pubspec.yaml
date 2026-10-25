@@ -1,7 +1,7 @@
 name: makco
 description: "MAKCO - Chennai transit booking. Madras Flow design."
 publish_to: 'none'
-version: 3.3.1+331
+version: 3.3.2+332
 
 environment:
   sdk: ^3.12.2
@@ -12,6 +12,7 @@ dependencies:
   http: ^1.2.0
   shared_preferences: ^2.2.0
   webview_flutter: ^4.8.0
+  url_launcher: ^6.3.1
   flutter_secure_storage: ^9.2.4
   geolocator: ^13.0.2
   cupertino_icons: ^1.0.6
