@@ -42,7 +42,7 @@ Note (2026-10): upstream now accepts only `METRO`, `SUBWAY`, `BUS`.
 GET /
 ```
 ```json
-{"app":"Makco","modes":["bus","metro"],"status":"ok","version":"3.3.0"}
+{"app":"Makco","modes":["bus","metro"],"status":"ok","version":"3.3.1"}
 ```
 
 ### Auth

@@ -43,12 +43,13 @@ Backend (Rust) at `/home/makco/backend`:
   profile, ticket bookings). Mode-aware.
 - `src/handlers.rs` — token validation, mode query, and a thin upstream proxy.
   Payment is universal; no admin detection or mock-payment bypass. Errors return
-  real HTTP status codes (400 validation, 401 missing token, 502 upstream).
+  real HTTP status codes (400 validation, 401 missing token, 502 upstream)
+  and request/booking status logs.
 - `src/main.rs` — `/transit/*` routes plus legacy `/metro/*` aliases.
 - Release binary `backend/target/release/makco`, run by `makco.service` on
   `:8080` (enabled, auto-restart). Verified live at `http://163.123.236.154:8080`.
 
-Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.0+330:
+Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.1+331:
 - **One-screen booking**: From/To station sheets, quantity, auto fare fetch,
   one-tap repeat from saved recent trips. No booking wizard.
 - **State**: Riverpod providers for session, stations, tickets, recents and the
@@ -57,7 +58,8 @@ Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.0+330:
   `makco://app/ticket?ref=...` deep link.
 - **Tickets**: real scannable QR from the operator's `qrData` (`qr_flutter`),
   ticket number, valid-till, polling for fresh bookings, shared `TicketTile`
-  across Home and Tickets. `/tickets` now lists bookings via
+  across Home and Tickets. Pending tickets poll for ~90s, then show the
+  booking/payment status with a manual retry instead of an endless spinner. `/tickets` now lists bookings via
   `frfs/booking/list`; booking-level `stations[]` supplies from/to names.
 - **Tickets tab**: All / Active / Past filters, pull-to-refresh, tap for ticket.
 - **Auth**: 10-digit phone, 4-digit OTP with autofill, auto-submit, resend timer.

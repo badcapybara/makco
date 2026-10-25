@@ -7,6 +7,8 @@ use axum::{
     Router,
 };
 use tower_http::cors::CorsLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -73,11 +75,16 @@ async fn main() -> anyhow::Result<()> {
             "/booking/:booking_id/refresh",
             get(handlers::refresh_booking_status),
         )
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
         .layer(cors);
 
     let addr = format!("0.0.0.0:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Makco v3.3.0 serving metro transit API at http://{addr}");
+    tracing::info!("Makco v3.3.1 serving metro transit API at http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }

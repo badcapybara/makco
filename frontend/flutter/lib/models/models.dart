@@ -105,6 +105,14 @@ class Booking {
     }
   }
 
+  String get paymentStatus =>
+      (payment?['status'] as String?)?.toUpperCase() ?? '';
+
+  bool get paymentFailed =>
+      paymentStatus == 'FAILURE' ||
+      paymentStatus == 'FAILED' ||
+      paymentStatus == 'CANCELLED';
+
   factory Booking.fromJson(Map<String, dynamic> j) => Booking(
     bookingId: (j['bookingId'] as String?) ?? '',
     status: (j['status'] as String?) ?? 'NEW',

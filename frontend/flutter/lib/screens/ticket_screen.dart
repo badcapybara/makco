@@ -28,7 +28,9 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
   bool _loading = false;
   Timer? _timer;
   int _tries = 0;
-  static const _maxTries = 8;
+  bool _timedOut = false;
+  String? _pollError;
+  static const _maxTries = 30;
 
   @override
   void initState() {
@@ -114,38 +116,77 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
     if (booking.bookingId.isEmpty) return;
     _timer?.cancel();
     _tries = 0;
+    _timedOut = false;
+    _pollError = null;
+    unawaited(_poll());
     _timer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
   }
 
-  Future<void> _retryQr() async {
-    _tries = 0;
-    await _poll();
-  }
+  Future<void> _retryQr() async => _startPollingIfNeeded();
 
   Future<void> _poll() async {
     final booking = _booking;
     if (booking == null) return;
     if (_tries >= _maxTries) {
       _timer?.cancel();
+      if (mounted && !_timedOut) setState(() => _timedOut = true);
       return;
     }
     _tries++;
+    Booking updated;
     try {
-      final updated = await Api.bookingStatus(
+      updated = await Api.bookingStatus(
         booking.bookingId,
         mode: TransitMode.metro.key,
       );
+    } catch (_) {
       if (!mounted) return;
-      final ready = updated.confirmed || updated.tickets.isNotEmpty;
-      if (ready) {
-        _timer?.cancel();
-        setState(() => _booking = updated);
-      }
-    } catch (_) {}
+      setState(() {
+        _pollError = 'Could not reach the server.';
+        _timedOut = _tries >= _maxTries;
+      });
+      if (_timedOut) _timer?.cancel();
+      return;
+    }
+    if (!mounted) return;
+    final ready = updated.confirmed || updated.tickets.isNotEmpty;
+    final status = updated.status.toUpperCase();
+    final failed =
+        updated.paymentFailed ||
+        status == 'CANCELLED' ||
+        status == 'FAILED' ||
+        status == 'EXPIRED' ||
+        status == 'PAYMENT_FAILED';
+    final timedOut = !ready && !failed && _tries >= _maxTries;
+    if (ready || failed || timedOut) _timer?.cancel();
+    setState(() {
+      _booking = updated;
+      _pollError = null;
+      _timedOut = timedOut;
+    });
   }
 
   bool get _ready =>
       _booking != null && (_booking!.confirmed || _booking!.tickets.isNotEmpty);
+
+  bool get _failed {
+    final booking = _booking;
+    if (booking == null || _ready) return false;
+    final status = booking.status.toUpperCase();
+    return booking.paymentFailed ||
+        status == 'CANCELLED' ||
+        status == 'FAILED' ||
+        status == 'EXPIRED' ||
+        status == 'PAYMENT_FAILED';
+  }
+
+  String get _waitingStatus {
+    final status = _booking?.status ?? '';
+    final payment = _booking?.paymentStatus ?? '';
+    if (status.isEmpty && payment.isEmpty) return '';
+    if (payment.isEmpty) return status;
+    return '$status · payment $payment';
+  }
 
   void _close() {
     if (context.canPop()) {
@@ -219,7 +260,13 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
                   const SizedBox(height: 14),
                   Center(
                     child: Text(
-                      _ready ? 'Ticket ready' : 'Confirming your ticket',
+                      _ready
+                          ? 'Ticket ready'
+                          : _failed
+                          ? 'Payment not completed'
+                          : _timedOut
+                          ? 'Still waiting for the ticket'
+                          : 'Confirming your ticket',
                       style: Mf.display(28),
                       textAlign: TextAlign.center,
                     ),
@@ -229,8 +276,13 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
                     child: Text(
                       _ready
                           ? 'Show this at the gate.'
+                          : _failed
+                          ? 'No ticket was issued for this booking.'
+                          : _timedOut
+                          ? 'The operator has not issued the QR yet.'
                           : 'This updates automatically in a moment.',
                       style: Mf.body(14, color: Mf.inkMuted),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -322,6 +374,58 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
                               ),
                             ),
                           )
+                        else if (_failed)
+                          Center(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              child: Column(
+                                children: [
+                                  const Icon(
+                                    Icons.error_outline_rounded,
+                                    size: 42,
+                                    color: Mf.coral,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    _waitingStatus.isEmpty
+                                        ? 'This booking did not complete.'
+                                        : _waitingStatus,
+                                    style: Mf.body(13, color: Mf.inkMuted),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                        else if (_timedOut)
+                          Center(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              child: Column(
+                                children: [
+                                  const Icon(
+                                    Icons.schedule_rounded,
+                                    size: 42,
+                                    color: Mf.inkFaint,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    _pollError ??
+                                        (_waitingStatus.isEmpty
+                                            ? 'The ticket is taking longer than expected.'
+                                            : 'Ticket status: $_waitingStatus'),
+                                    style: Mf.body(13, color: Mf.inkMuted),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  GhostButton(
+                                    'Check again',
+                                    onPressed: _retryQr,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
                         else
                           Center(
                             child: Padding(
@@ -341,6 +445,13 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
                                     'Waiting for the ticket…',
                                     style: Mf.body(13, color: Mf.inkMuted),
                                   ),
+                                  if (_waitingStatus.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _waitingStatus,
+                                      style: Mf.body(12, color: Mf.inkFaint),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),

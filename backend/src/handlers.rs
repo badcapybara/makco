@@ -103,7 +103,7 @@ pub async fn health() -> impl IntoResponse {
     Json(json!({
         "status": "ok",
         "app": "Makco",
-        "version": "3.3.0",
+        "version": "3.3.1",
         "modes": ["bus", "metro"]
     }))
 }
@@ -303,11 +303,31 @@ pub async fn confirm_booking(
         ));
     }
 
-    client()
+    match client()
         .mt_confirm_booking(&token, &city, &mode, &quote_id, qty)
         .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "CONFIRM_FAILED", e.to_string()))
+    {
+        Ok(r) => {
+            tracing::info!(
+                booking_id = %r.get("bookingId").and_then(|v| v.as_str()).unwrap_or(""),
+                status = %r.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                has_payment_link = r
+                    .get("payment")
+                    .and_then(|p| p.get("paymentOrder"))
+                    .and_then(|p| p.get("payment_links"))
+                    .and_then(|p| p.get("web"))
+                    .and_then(|v| v.as_str())
+                    .is_some(),
+                "booking confirmed"
+            );
+            Ok(Json(r))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::BAD_GATEWAY,
+            "CONFIRM_FAILED",
+            e.to_string(),
+        )),
+    }
 }
 
 pub async fn get_booking_status(
@@ -318,11 +338,34 @@ pub async fn get_booking_status(
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    client()
+    match client()
         .mt_get_booking_status(&token, &city, &mode, &booking_id)
         .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "STATUS_FAILED", e.to_string()))
+    {
+        Ok(r) => {
+            tracing::info!(
+                booking_id = %booking_id,
+                status = %r.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                payment = %r
+                    .get("payment")
+                    .and_then(|p| p.get("status"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                tickets = r
+                    .get("tickets")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0),
+                "booking status"
+            );
+            Ok(Json(r))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::BAD_GATEWAY,
+            "STATUS_FAILED",
+            e.to_string(),
+        )),
+    }
 }
 
 pub async fn refresh_booking_status(
