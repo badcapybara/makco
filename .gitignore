@@ -10,3 +10,5 @@ session-*.md
 
 # OS
 .DS_Store
+# User-provided screenshots (do not publish)
+/IMG-*.jpg
