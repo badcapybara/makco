@@ -69,7 +69,9 @@ class ProfileScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 22),
-          if (profile == null)
+          if (profile == null && session.profileLoading)
+            const _ProfileLoading()
+          else if (profile == null)
             _ProfileFallback(
               onRetry: () =>
                   ref.read(sessionProvider.notifier).refreshProfile(),
@@ -87,7 +89,7 @@ class ProfileScreen extends ConsumerWidget {
               ),
               ('Mode', 'Chennai Metro'),
               ('Server', Api.baseUrl.replaceFirst('http://', '')),
-              ('Version', '3.3.3 (333)'),
+              ('Version', '3.3.4 (334)'),
             ],
           ),
           const SizedBox(height: 26),
@@ -227,6 +229,27 @@ class _InfoCard extends StatelessWidget {
             if (i != rows.length - 1)
               const Divider(height: 1, color: Mf.hairline),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileLoading extends StatelessWidget {
+  const _ProfileLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const TicketCard(
+      padding: EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SkeletonCard(height: 20),
+          SizedBox(height: 14),
+          SkeletonCard(height: 34),
+          SizedBox(height: 18),
+          SkeletonCard(height: 14),
         ],
       ),
     );

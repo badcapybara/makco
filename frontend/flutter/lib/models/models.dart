@@ -86,6 +86,8 @@ class Booking {
   final Map<String, dynamic>? payment;
   final List<dynamic> tickets;
   final List<dynamic> stations;
+  final String createdAt;
+  final String updatedAt;
 
   Booking({
     required this.bookingId,
@@ -94,6 +96,8 @@ class Booking {
     this.payment,
     this.tickets = const [],
     this.stations = const [],
+    this.createdAt = '',
+    this.updatedAt = '',
   });
 
   String get paymentUrl {
@@ -165,7 +169,20 @@ class Booking {
         : null,
     tickets: (j['tickets'] as List?) ?? const [],
     stations: (j['stations'] as List?) ?? const [],
+    createdAt: (j['createdAt'] as String?) ?? '',
+    updatedAt: (j['updatedAt'] as String?) ?? '',
   );
+
+  Map<String, dynamic> toTicketJson() => {
+    'bookingId': bookingId,
+    'status': status,
+    'price': price,
+    if (payment != null) 'payment': payment,
+    'tickets': tickets,
+    'stations': stations,
+    if (createdAt.isNotEmpty) 'createdAt': createdAt,
+    if (updatedAt.isNotEmpty) 'updatedAt': updatedAt,
+  };
 
   /// Builds a booking from a `/tickets` list item (booking-level or a single
   /// ticket object).
@@ -181,6 +198,8 @@ class Booking {
       price: (j['price'] as num?) ?? ((j['fare'] as num?) ?? 0),
       tickets: tickets,
       stations: (j['stations'] as List?) ?? const [],
+      createdAt: (j['createdAt'] as String?) ?? '',
+      updatedAt: (j['updatedAt'] as String?) ?? '',
     );
   }
 
@@ -299,6 +318,12 @@ class Profile {
   final String gender;
 
   Profile({required this.id, required this.maskedMobile, required this.gender});
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'maskedMobileNumber': maskedMobile,
+    'gender': gender,
+  };
 
   factory Profile.fromJson(Map<String, dynamic> j) => Profile(
     id: (j['id'] as String?) ?? '',

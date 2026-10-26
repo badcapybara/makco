@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../services/cache.dart';
 import 'catalog.dart';
 import 'recents.dart';
 
@@ -209,6 +210,7 @@ class RideController extends Notifier<RideState> {
               quantity: state.quantity,
             ),
           );
+      await Cache.saveBookingSnapshot(booking);
       ref.invalidate(ticketsProvider);
       final prepared = await _waitForPaymentLink(booking);
       return prepared;
@@ -244,9 +246,11 @@ Future<Booking> _waitForPaymentLink(Booking booking) async {
         latest.paymentFailed ||
         latest.expired ||
         _terminalStatus(latest.status)) {
+      await Cache.saveBookingSnapshot(latest);
       return latest;
     }
   }
+  await Cache.saveBookingSnapshot(latest);
   return latest;
 }
 

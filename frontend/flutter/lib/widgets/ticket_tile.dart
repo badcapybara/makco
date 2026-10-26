@@ -84,9 +84,15 @@ StatusKind ticketStatusKind(String status) {
     case 'CANCELLED':
     case 'EXPIRED':
     case 'FAILED':
+    case 'PAYMENT_FAILED':
+    case 'PAYMENT_PENDING_FAILED':
+    case 'DECLINED':
       return StatusKind.error;
     case 'NEW':
     case 'PENDING':
+    case 'PAYMENT_PENDING':
+    case 'PROCESSING':
+    case 'APPROVED':
       return StatusKind.info;
     default:
       return StatusKind.neutral;

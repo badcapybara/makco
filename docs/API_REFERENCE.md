@@ -34,6 +34,21 @@ Pass `?mode=bus` or `?mode=metro` (default `metro`). Mode maps to the upstream
 Note (2026-10): upstream now accepts only `METRO`, `SUBWAY`, `BUS`.
 `METRO_V2` and `BUS_HYBRID` return HTTP 400.
 
+## Caching
+
+Read-only endpoints are cached in memory to hide upstream latency (roughly
+0.5-2s per call from the server):
+
+| Endpoint | TTL | Scope |
+|----------|-----|-------|
+| `/transit/stations` | 10 min | shared by city/mode |
+| `/transit/routes`, `/routes/active`, `/route/{code}/stops`, `/stops/possible` | 10 min | shared by city/mode |
+| `/profile` | 5 min | token |
+| `/tickets` | 3 s | token + city/mode |
+
+`/tickets` is invalidated when a booking is confirmed. Booking status, quote,
+search and confirm are never cached because payment state must be fresh.
+
 ## Endpoints
 
 ### Health
@@ -42,7 +57,7 @@ Note (2026-10): upstream now accepts only `METRO`, `SUBWAY`, `BUS`.
 GET /
 ```
 ```json
-{"app":"Makco","modes":["bus","metro"],"status":"ok","version":"3.3.2"}
+{"app":"Makco","modes":["bus","metro"],"status":"ok","version":"3.3.3"}
 ```
 
 ### Auth

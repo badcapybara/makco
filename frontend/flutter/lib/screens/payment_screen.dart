@@ -1,28 +1,31 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:makco/models/models.dart';
 import 'package:makco/services/api_service.dart';
+import 'package:makco/services/cache.dart';
+import 'package:makco/state/catalog.dart';
 import 'package:makco/theme/madras_flow.dart';
 import 'package:makco/widgets/madras_components.dart';
 
 /// Hosts the Juspay webview and watches the booking until the operator issues
 /// the ticket. The webview is only the payment surface; the booking status is
 /// always the source of truth.
-class PaymentScreen extends StatefulWidget {
+class PaymentScreen extends ConsumerStatefulWidget {
   final Booking booking;
 
   const PaymentScreen({super.key, required this.booking});
 
   @override
-  State<PaymentScreen> createState() => _PaymentScreenState();
+  ConsumerState<PaymentScreen> createState() => _PaymentScreenState();
 }
 
-class _PaymentScreenState extends State<PaymentScreen>
+class _PaymentScreenState extends ConsumerState<PaymentScreen>
     with WidgetsBindingObserver {
   late final WebViewController _controller;
   Timer? _pollTimer;
@@ -35,6 +38,7 @@ class _PaymentScreenState extends State<PaymentScreen>
   String? _webError;
   String? _loadedUrl;
   String _status = 'Waiting for payment…';
+  String _snapshotKey = '';
 
   static const _pollInterval = Duration(seconds: 2);
   static const _paymentWindow = Duration(minutes: 5);
@@ -169,7 +173,10 @@ class _PaymentScreenState extends State<PaymentScreen>
         _status = notFound ? 'This booking is no longer available.' : e.message;
         if (notFound) _failed = true;
       });
-      if (notFound) _stopPolling();
+      if (notFound) {
+        _stopPolling();
+        ref.invalidate(ticketsProvider);
+      }
       return;
     } catch (_) {
       _checking = false;
@@ -179,9 +186,12 @@ class _PaymentScreenState extends State<PaymentScreen>
     }
     _checking = false;
     if (!mounted || _finished) return;
+    await _saveSnapshot(updated);
+    if (!mounted || _finished) return;
 
     if (updated.confirmed || updated.tickets.isNotEmpty) {
       _finish();
+      ref.invalidate(ticketsProvider);
       context.pushReplacement('/ticket', extra: updated);
       return;
     }
@@ -203,6 +213,7 @@ class _PaymentScreenState extends State<PaymentScreen>
 
     if (failed) {
       _stopPolling();
+      ref.invalidate(ticketsProvider);
       return;
     }
 
@@ -282,6 +293,15 @@ class _PaymentScreenState extends State<PaymentScreen>
   void _finish() {
     _finished = true;
     _stopPolling();
+  }
+
+  Future<void> _saveSnapshot(Booking booking) async {
+    final key =
+        '${booking.status}|${booking.paymentStatus}|${booking.paymentUrl}|'
+        '${booking.tickets.length}';
+    if (key == _snapshotKey) return;
+    _snapshotKey = key;
+    await Cache.saveBookingSnapshot(booking);
   }
 
   void _snack(String msg) {

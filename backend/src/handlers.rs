@@ -1,4 +1,6 @@
+use std::future::Future;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use axum::{
     extract::Path,
@@ -11,10 +13,46 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::api_client::MtClient;
+use crate::cache;
 use crate::config::Config;
 
 type ApiError = (StatusCode, Json<Value>);
 type ApiResult = Result<Json<Value>, ApiError>;
+
+const CATALOG_TTL: Duration = Duration::from_secs(600);
+const PROFILE_TTL: Duration = Duration::from_secs(300);
+const TICKETS_TTL: Duration = Duration::from_secs(3);
+
+fn cacheable(value: &Value) -> bool {
+    !value.is_null() && value.get("errorCode").is_none() && value.get("error").is_none()
+}
+
+async fn cached_fetch<F, Fut>(
+    key: String,
+    ttl: Duration,
+    error_code: &'static str,
+    fetch: F,
+) -> ApiResult
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = anyhow::Result<Value>>,
+{
+    if let Some(value) = cache::get(&key) {
+        tracing::debug!(cache = "hit", %key, "serving cached response");
+        return Ok(Json(value));
+    }
+    let value = fetch()
+        .await
+        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, error_code, e.to_string()))?;
+    if let Some((status, code, message)) = upstream_error(&value) {
+        tracing::warn!(upstream_code = %code, upstream_message = %message, "cached endpoint failed upstream");
+        return Err(api_error(status, &code, message));
+    }
+    if cacheable(&value) {
+        cache::put(key, &value, ttl);
+    }
+    Ok(Json(value))
+}
 
 fn api_error(status: StatusCode, code: &str, message: impl Into<String>) -> ApiError {
     (
@@ -137,7 +175,7 @@ pub async fn health() -> impl IntoResponse {
     Json(json!({
         "status": "ok",
         "app": "Makco",
-        "version": "3.3.2",
+        "version": "3.3.3",
         "modes": ["bus", "metro"]
     }))
 }
@@ -205,39 +243,39 @@ pub async fn get_stations(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiR
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    client()
-        .mt_get_stations(&token, &city, &mode)
-        .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "STATIONS_FAILED", e.to_string()))
+    cached_fetch(
+        format!("stations:{city}:{mode}"),
+        CATALOG_TTL,
+        "STATIONS_FAILED",
+        || client().mt_get_stations(&token, &city, &mode),
+    )
+    .await
 }
 
 pub async fn get_routes(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    client()
-        .mt_get_routes(&token, &city, &mode)
-        .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "ROUTES_FAILED", e.to_string()))
+    cached_fetch(
+        format!("routes:{city}:{mode}"),
+        CATALOG_TTL,
+        "ROUTES_FAILED",
+        || client().mt_get_routes(&token, &city, &mode),
+    )
+    .await
 }
 
 pub async fn get_active_routes(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    client()
-        .mt_get_active_routes(&token, &city, &mode)
-        .await
-        .map(Json)
-        .map_err(|e| {
-            api_error(
-                StatusCode::BAD_GATEWAY,
-                "ACTIVE_ROUTES_FAILED",
-                e.to_string(),
-            )
-        })
+    cached_fetch(
+        format!("active-routes:{city}:{mode}"),
+        CATALOG_TTL,
+        "ACTIVE_ROUTES_FAILED",
+        || client().mt_get_active_routes(&token, &city, &mode),
+    )
+    .await
 }
 
 pub async fn get_route_stops(
@@ -248,28 +286,26 @@ pub async fn get_route_stops(
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    client()
-        .mt_get_route_stops(&token, &city, &mode, &route_code)
-        .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "ROUTE_STOPS_FAILED", e.to_string()))
+    cached_fetch(
+        format!("route-stops:{city}:{mode}:{route_code}"),
+        CATALOG_TTL,
+        "ROUTE_STOPS_FAILED",
+        || client().mt_get_route_stops(&token, &city, &mode, &route_code),
+    )
+    .await
 }
 
 pub async fn get_possible_stops(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    client()
-        .mt_get_possible_stops(&token, &city, &mode)
-        .await
-        .map(Json)
-        .map_err(|e| {
-            api_error(
-                StatusCode::BAD_GATEWAY,
-                "POSSIBLE_STOPS_FAILED",
-                e.to_string(),
-            )
-        })
+    cached_fetch(
+        format!("possible-stops:{city}:{mode}"),
+        CATALOG_TTL,
+        "POSSIBLE_STOPS_FAILED",
+        || client().mt_get_possible_stops(&token, &city, &mode),
+    )
+    .await
 }
 
 pub async fn search_fare(
@@ -363,6 +399,7 @@ pub async fn confirm_booking(
                     "The operator did not create a booking. Please try again.",
                 ));
             }
+            cache::remove_prefix(&format!("tickets:{}:", cache::token_key(&token)));
             tracing::info!(
                 booking_id = %r.get("bookingId").and_then(|v| v.as_str()).unwrap_or(""),
                 status = %r.get("status").and_then(|v| v.as_str()).unwrap_or(""),
@@ -503,22 +540,22 @@ pub async fn verify_ticket(
 
 pub async fn get_profile(headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
-    client()
-        .mt_get_profile(&token)
-        .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "PROFILE_FAILED", e.to_string()))
+    let key = format!("profile:{}", cache::token_key(&token));
+    cached_fetch(key, PROFILE_TTL, "PROFILE_FAILED", || {
+        client().mt_get_profile(&token)
+    })
+    .await
 }
 
 pub async fn get_ticket_bookings(Query(q): Query<CtyQuery>, headers: HeaderMap) -> ApiResult {
     let token = require_token(&headers)?;
     let mode = mode_of(&q);
     let city = city_of(&q);
-    client()
-        .mt_get_ticket_bookings(&token, &city, &mode)
-        .await
-        .map(Json)
-        .map_err(|e| api_error(StatusCode::BAD_GATEWAY, "TICKETS_FAILED", e.to_string()))
+    let key = format!("tickets:{}:{city}:{mode}", cache::token_key(&token));
+    cached_fetch(key, TICKETS_TTL, "TICKETS_FAILED", || {
+        client().mt_get_ticket_bookings(&token, &city, &mode)
+    })
+    .await
 }
 
 static CLIENT: OnceLock<MtClient> = OnceLock::new();
@@ -562,5 +599,32 @@ mod tests {
     #[test]
     fn missing_error_code_is_not_an_upstream_error() {
         assert!(upstream_error(&json!({"bookingId": "b1", "status": "NEW"})).is_none());
+    }
+
+    #[tokio::test]
+    async fn cached_fetch_reuses_successful_responses() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let key = format!("test:cached-fetch:{}", std::process::id());
+        let first_calls = calls.clone();
+        let first = cached_fetch(key.clone(), CATALOG_TTL, "TEST_FAILED", || async move {
+            first_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"ok": true}))
+        })
+        .await
+        .unwrap();
+        assert_eq!(first.0, json!({"ok": true}));
+
+        let second_calls = calls.clone();
+        let second = cached_fetch(key, CATALOG_TTL, "TEST_FAILED", || async move {
+            second_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"ok": false}))
+        })
+        .await
+        .unwrap();
+        assert_eq!(second.0, json!({"ok": true}));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

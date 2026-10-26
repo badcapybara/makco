@@ -7,6 +7,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'package:makco/models/models.dart';
 import 'package:makco/services/api_service.dart';
+import 'package:makco/services/cache.dart';
+import 'package:makco/state/catalog.dart';
 import 'package:makco/state/ride.dart';
 import 'package:makco/theme/madras_flow.dart';
 import 'package:makco/widgets/madras_components.dart';
@@ -51,19 +53,19 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
   }
 
   Future<void> _resolveFromRef() async {
-    final ref = widget.ticketRef;
-    if (ref == null || ref.isEmpty) {
+    final ticketRef = widget.ticketRef;
+    if (ticketRef == null || ticketRef.isEmpty) {
       setState(() => _error = 'No ticket reference was provided.');
       return;
     }
     setState(() => _loading = true);
     try {
-      final tickets = await Api.tickets();
+      final tickets = await ref.read(ticketsProvider.future);
       Map<String, dynamic>? match;
       for (final raw in tickets) {
         if (raw is! Map) continue;
         final ticket = Map<String, dynamic>.from(raw);
-        if (_matchesRef(ticket, ref)) {
+        if (_matchesRef(ticket, ticketRef)) {
           match = ticket;
           break;
         }
@@ -72,7 +74,7 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
       if (match == null) {
         setState(() {
           _loading = false;
-          _error = 'We could not find ticket $ref on this account.';
+          _error = 'We could not find ticket $ticketRef on this account.';
         });
         return;
       }
@@ -181,6 +183,8 @@ class _TicketScreenState extends ConsumerState<TicketScreen> {
         status == 'PAYMENT_FAILED';
     final timedOut = !ready && !failed && _tries >= _maxTries;
     if (ready || failed || timedOut) _timer?.cancel();
+    await Cache.saveBookingSnapshot(updated);
+    if (ready || failed) ref.invalidate(ticketsProvider);
     setState(() {
       _booking = updated;
       _pollError = null;

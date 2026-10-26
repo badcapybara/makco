@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,15 +13,44 @@ import 'package:makco/widgets/ticket_tile.dart';
 /// The Tickets tab — active and past bookings.
 class HistoryScreen extends ConsumerStatefulWidget {
   final VoidCallback? onBook;
+  final int refreshKey;
 
-  const HistoryScreen({super.key, this.onBook});
+  const HistoryScreen({super.key, this.onBook, this.refreshKey = 0});
 
   @override
   ConsumerState<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends ConsumerState<HistoryScreen> {
+class _HistoryScreenState extends ConsumerState<HistoryScreen>
+    with WidgetsBindingObserver {
   int _filter = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant HistoryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.refreshKey != oldWidget.refreshKey) {
+      unawaited(_refresh());
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refresh());
+    }
+  }
 
   Future<void> _refresh() async {
     ref.invalidate(ticketsProvider);
@@ -35,7 +66,10 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         status == 'VALID' ||
         status == 'ACTIVE' ||
         status == 'NEW' ||
-        status == 'PENDING';
+        status == 'PENDING' ||
+        status == 'PAYMENT_PENDING' ||
+        status == 'PROCESSING' ||
+        status == 'APPROVED';
   }
 
   @override

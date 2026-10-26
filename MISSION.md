@@ -45,11 +45,14 @@ Backend (Rust) at `/home/makco/backend`:
   Payment is universal; no admin detection or mock-payment bypass. Errors return
   real HTTP status codes (400 validation, 401 missing token, 502 upstream)
   and request/booking status logs.
+- `src/cache.rs` — in-memory TTL cache for stations/routes (10 min), profile
+  (5 min) and tickets (3 s, invalidated on confirm); keeps payment status fresh.
+  The reqwest client uses HTTP/2, keep-alive and a 16-connection pool.
 - `src/main.rs` — `/transit/*` routes plus legacy `/metro/*` aliases.
 - Release binary `backend/target/release/makco`, run by `makco.service` on
   `:8080` (enabled, auto-restart). Verified live at `http://163.123.236.154:8080`.
 
-Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.3+333:
+Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.4+334:
 - **One-screen booking**: From/To station sheets, quantity, auto fare fetch,
   one-tap repeat from saved recent trips. No booking wizard.
 - **State**: Riverpod providers for session, stations, tickets, recents and the
@@ -67,8 +70,10 @@ Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.3+333:
 - **Tickets tab**: All / Active / Past filters, pull-to-refresh, tap for ticket.
 - **Auth**: 10-digit phone, 4-digit OTP with autofill, auto-submit, resend timer.
   Token/user id live in encrypted storage; old plain-preference values migrate.
-- **Offline**: last stations and tickets are cached; providers fall back when the
-  network fails. Tickets cache is cleared on sign-out.
+- **Offline**: stations, profile and tickets are cached; providers fall back when
+  the network fails. Locally seen bookings are snapshotted so a pending payment
+  ticket appears in history even if the operator list is briefly stale. Caches
+  are cleared on sign-out.
 - **Stations**: 41 metro stations, search, favourites (star + filter) and a
   "Near me" sort using device location; no bus UI.
 - **Fonts**: Bricolage Grotesque and Public Sans are bundled assets, no runtime
@@ -77,7 +82,8 @@ Frontend (Flutter) at `/home/makco/frontend/flutter`, v3.3.3+333:
 - `Api` normalises bare JSON arrays from upstream (`stations`, `routes`, quotes,
   tickets) under `data`, so all list endpoints decode consistently.
 - Tests: `test/app_smoke_test.dart` covers the auth boot, router, Home, station
-  picker, favourites filter and QR ticket. `flutter analyze` clean.
+  picker, favourites filter, QR ticket, pending-ticket history and offline
+  snapshots (10 passing). `flutter analyze` clean.
 - Release APK signed with `android/makco-release.jks` (alias `makco`), served at
   `http://163.123.236.154/app-release.apk` from `/var/www/makco`.
 

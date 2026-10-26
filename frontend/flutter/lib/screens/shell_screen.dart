@@ -16,6 +16,14 @@ class ShellScreen extends StatefulWidget {
 
 class _ShellScreenState extends State<ShellScreen> {
   int _index = 0;
+  int _ticketsRefresh = 0;
+
+  void _openTickets() {
+    setState(() {
+      _index = 1;
+      _ticketsRefresh++;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,9 +34,12 @@ class _ShellScreenState extends State<ShellScreen> {
           children: [
             HomeScreen(
               onOpenProfile: () => setState(() => _index = 2),
-              onOpenTickets: () => setState(() => _index = 1),
+              onOpenTickets: _openTickets,
             ),
-            HistoryScreen(onBook: () => setState(() => _index = 0)),
+            HistoryScreen(
+              onBook: () => setState(() => _index = 0),
+              refreshKey: _ticketsRefresh,
+            ),
             const ProfileScreen(),
           ],
         ),
@@ -37,7 +48,10 @@ class _ShellScreenState extends State<ShellScreen> {
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
         child: _PillNav(
           currentIndex: _index,
-          onChanged: (i) => setState(() => _index = i),
+          onChanged: (i) => setState(() {
+            if (i == 1) _ticketsRefresh++;
+            _index = i;
+          }),
         ),
       ),
     );

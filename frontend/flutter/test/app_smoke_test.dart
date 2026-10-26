@@ -7,8 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:makco/models/models.dart';
 import 'package:makco/router.dart';
+import 'package:makco/screens/history_screen.dart';
 import 'package:makco/screens/home_screen.dart';
 import 'package:makco/screens/ticket_screen.dart';
+import 'package:makco/services/cache.dart';
 import 'package:makco/state/catalog.dart';
 import 'package:makco/state/recents.dart';
 import 'package:makco/state/session.dart';
@@ -210,6 +212,60 @@ void main() {
     expect(booking.paymentOrderStatus, 'PENDING');
     expect(booking.paymentFailed, isFalse);
     expect(booking.paymentSucceeded, isFalse);
+  });
+
+  testWidgets('pending payment bookings show under active tickets', (
+    tester,
+  ) async {
+    final pending = <String, dynamic>{
+      'bookingId': 'pending-1',
+      'status': 'PAYMENT_PENDING',
+      'price': 24,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+      'stations': [
+        {'name': 'Alpha Metro'},
+        {'name': 'Beta Metro'},
+      ],
+    };
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          ticketsProvider.overrideWith((ref) async => [pending]),
+        ],
+        child: MaterialApp(
+          theme: Mf.theme(),
+          home: const Scaffold(body: HistoryScreen()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Active · 1'), findsOneWidget);
+    expect(find.text('PAYMENT_PENDING'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('booking snapshots and profile survive a restart', () async {
+    final booking = Booking(
+      bookingId: 'pending-2',
+      status: 'PAYMENT_PENDING',
+      price: 24,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    await Cache.saveBookingSnapshot(booking);
+    final snapshots = await Cache.readBookingSnapshots();
+    expect(snapshots, hasLength(1));
+    expect(snapshots.single['bookingId'], 'pending-2');
+
+    final profile = Profile(
+      id: 'u1',
+      maskedMobile: '+91 ••••• 6721',
+      gender: 'MALE',
+    );
+    await Cache.saveProfile(profile);
+    final restored = await Cache.readProfile();
+    expect(restored?.maskedMobile, '+91 ••••• 6721');
+    expect(restored?.gender, 'MALE');
   });
 
   test('failed payment states are terminal', () {
